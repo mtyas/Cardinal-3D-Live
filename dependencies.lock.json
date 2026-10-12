@@ -1,0 +1,18 @@
+{
+  "node": "22.22.2",
+  "browser_decoder": {
+    "package": "opus-decoder",
+    "version": "0.7.12",
+    "repository": "https://github.com/eshaz/wasm-audio-decoders.git",
+    "commit": "c9ff316db7f21fe95b0e89b308d0720fde6fecd2",
+    "submodules": "recursive gitlinks at the pinned commit"
+  },
+  "godot_bindings": "e83fd0904c13356ed1d4c3d09f8bb9132bdc6b77",
+  "server_codec": {
+    "package": "opusscript",
+    "version": "0.1.1",
+    "repository": "https://github.com/abalabahaha/opusscript.git",
+    "commit": "07ae74db7385d6d1be981d929f2f2f2b7e6b8449"
+  },
+  "web_dependencies": "exact versions and integrity in show-web/package-lock.json"
+}

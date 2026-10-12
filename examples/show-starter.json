@@ -1,0 +1,86 @@
+{
+  "version": "2.4.1",
+  "modules": [
+    {
+      "id": 1,
+      "plugin": "Fundamental",
+      "model": "VCO",
+      "pos": [
+        0,
+        0
+      ],
+      "params": []
+    },
+    {
+      "id": 2,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowSpeaker",
+      "pos": [
+        10,
+        0
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowSpeaker",
+      "pos": [
+        20,
+        0
+      ],
+      "params": [
+        {
+          "id": 1,
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowLight",
+      "pos": [
+        30,
+        0
+      ],
+      "params": []
+    },
+    {
+      "id": 1000,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowChatBoard",
+      "pos": [
+        48,
+        1
+      ],
+      "params": []
+    }
+  ],
+  "cables": [
+    {
+      "id": 5,
+      "outputModuleId": 1,
+      "outputId": 0,
+      "inputModuleId": 2,
+      "inputId": 0,
+      "color": "#65e7ff"
+    },
+    {
+      "id": 6,
+      "outputModuleId": 1,
+      "outputId": 1,
+      "inputModuleId": 3,
+      "inputId": 0,
+      "color": "#ffd365"
+    },
+    {
+      "id": 7,
+      "outputModuleId": 1,
+      "outputId": 0,
+      "inputModuleId": 4,
+      "inputId": 0,
+      "color": "#bd83ff"
+    }
+  ]
+}

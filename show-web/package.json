@@ -1,0 +1,18 @@
+{
+  "name": "cardinal-3d-live",
+  "version": "0.5.0-alpha",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.25.10",
+    "opus-decoder": "0.7.12",
+    "opusscript": "0.1.1",
+    "three": "0.180.0",
+    "ws": "8.22.0"
+  }
+}

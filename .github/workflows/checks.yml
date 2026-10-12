@@ -1,0 +1,22 @@
+name: Browser checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python scripts/check_release_privacy.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: show-web/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: show-web
+      - run: npm test
+        working-directory: show-web

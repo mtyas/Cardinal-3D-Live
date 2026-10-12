@@ -1,0 +1,9 @@
+# Artwork and attribution
+
+The Windows release includes pinned Cardinal resources and their separate licences. `legal/NOTICE.txt`, `legal/LICENSES.md`, `legal/LICENSE-PERMISSIONS.md` and the retained upstream notices are included in both the download and the app's About & licences page. Software is GPL-3.0-or-later; Godot is MIT. Artwork and fonts retain their individual terms and must not be described collectively as GPL or unrestricted commercial material.
+
+The illustrated manual uses app screenshots, predominantly the Fundamental starter rack and original Rack components. Screenshots retain applicable third-party artwork terms. The Quest 2 controller diagram was created and supplied by mtyas; the project adds its action legend. Earlier reference screenshots and generated controller renders are excluded. The procedural case, hardware and scenery are original project graphics. No Meta, VCV or DISTRHO endorsement is implied.
+
+Fundamental artwork is GPL-3.0-or-later; Cardinal artwork is generally CC0 with separately documented exceptions. Rack ComponentLibrary artwork has noncommercial terms. Module resources include CC-BY, CC-BY-SA, noncommercial and custom permission terms; fonts have their own notices and, where applicable, Reserved Font Names. Preserve the complete notices and permissions rather than relying on this summary.
+
+Cardinal's explicit permission records for Audible Instruments and Befaco are retained. Bogaudio artwork attribution and share-alike terms are retained. Review the pinned module-by-module tables before repurposing artwork commercially. Supporting the author through Ko-fi does not grant additional rights to third-party assets.

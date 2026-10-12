@@ -1,0 +1,15 @@
+extends SceneTree
+func _initialize() -> void: run.call_deferred()
+func run() -> void:
+ var backend=load("res://scripts/embedded_client.gd").new()
+ var previous := OS.get_environment("CARDINAL_3D_XR")
+ OS.set_environment("CARDINAL_3D_XR","1")
+ var args: PackedStringArray=backend.restart_arguments()
+ assert(args[args.find('--xr-mode')+1]=='on')
+ assert(args[args.find('--path')+1]==ProjectSettings.globalize_path('res://'))
+ OS.set_environment("CARDINAL_3D_XR","0")
+ args=backend.restart_arguments();assert(args[args.find('--xr-mode')+1]=='off')
+ OS.set_environment("CARDINAL_3D_XR",previous)
+ backend.free()
+ print('Audio restarts explicitly preserve VR mode and project path: PASS')
+ quit()

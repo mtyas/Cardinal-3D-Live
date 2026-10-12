@@ -1,0 +1,21 @@
+services:
+  welcome:
+    image: node:22-alpine
+    command: node /app/portal.mjs
+    working_dir: /app
+    restart: unless-stopped
+    ports:
+      - "8788:8788"
+    environment:
+      PORT: "8788"
+      SHOW_UPSTREAM: "${SHOW_UPSTREAM:-http://100.64.0.20:8878}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-https://live.example.org}"
+      DATA_DIR: /data
+    volumes:
+      - ../show-web:/app:ro
+      - welcome-data:/data
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 192m
+volumes:
+  welcome-data:
