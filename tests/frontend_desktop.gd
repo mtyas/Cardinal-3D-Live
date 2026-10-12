@@ -11,6 +11,7 @@ func key(code: int, pressed: bool) -> void:
 	event.physical_keycode = code
 	event.pressed = pressed
 	Input.parse_input_event(event)
+	Input.flush_buffered_events()
 func run() -> void:
 	var host = load("res://scripts/main.gd").new()
 	root.add_child(host)
