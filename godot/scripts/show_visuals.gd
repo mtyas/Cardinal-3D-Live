@@ -4,6 +4,7 @@ var textures := {}
 var cursor := 0
 var environment_id := 0
 var environment_asset := ""
+var generation := ""
 func matrix(t: Transform3D) -> Array:
  var values := [t.basis.x.x,t.basis.x.y,t.basis.x.z,0,t.basis.y.x,t.basis.y.y,t.basis.y.z,0,t.basis.z.x,t.basis.z.y,t.basis.z.z,0,t.origin.x,t.origin.y,t.origin.z,1]
  return values.map(func(v): return snappedf(float(v),0.0001))
@@ -17,6 +18,9 @@ func asset(bytes: PackedByteArray, media: String, peer) -> String:
  peer.queue_asset(JSON.stringify({"type":"asset","id":id,"media":media,"data":Marshalls.raw_to_base64(bytes)}))
  return id
 func capture(host, peer) -> Dictionary:
+ if generation != str(host.generation):
+  generation = str(host.generation)
+  textures.clear()
  var offset := Vector3.ZERO if OS.get_environment("CARDINAL_3D_XR") == "1" else Vector3(0,1.5,0)
  var views: Array = host.modules.values()
  # One panel per visual update keeps PNG encoding away from audio delivery.

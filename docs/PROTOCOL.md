@@ -1,3 +1,5 @@
+> For the active visitor/relay protocol, see [SHOW-PROTOCOL.md](SHOW-PROTOCOL.md). The embedded performer reuses the native command semantics below through in-process calls; the TCP framing applies only to the legacy standalone bridge.
+
 # Local bridge v1
 
 VR unplugging uses `disconnect_cable` with `cable_id`, `input_module`, and `input_port`. The host removes exactly that cable after validating its current input endpoint and records a native undo action. Missing or changed cables fail without removing another connection. A pulled plug released over empty space disconnects; tracking loss or an unpulled click preserves the cable. Output sockets continue to support creating additional connections.

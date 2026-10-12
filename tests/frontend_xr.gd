@@ -3,9 +3,13 @@ extends SceneTree
 var failures := 0
 class CableProbe:
 	extends "res://scripts/main.gd"
-	var endpoints := []
+	var local_endpoints := []
+	var cable_parent: Node3D
+	var endpoints: Array:
+		get: return [cable_parent.to_global(local_endpoints[0]), cable_parent.to_global(local_endpoints[1])]
 	func _draw_wire(start: Vector3, end: Vector3, _color: Color, parent_node: Node3D) -> void:
-		endpoints = [parent_node.to_global(start), parent_node.to_global(end)]
+		local_endpoints = [start, end]
+		cable_parent = parent_node
 class Bridge:
 	extends RefCounted
 	var commands := []

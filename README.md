@@ -49,3 +49,7 @@ Artwork/fonts/samples retain separate terms, including noncommercial/custom lice
 Each binary release has a **complete matching source archive** including recursive Cardinal modules, bindings, SDK and dependency sources. GitHub's automatic source ZIP alone is incomplete. See [release notes/provenance](docs/RELEASE-0.5.md).
 
 Created by [mtyas](https://github.com/mtyas), building on Cardinal 3D. [Cardinal 3D v0.77](https://github.com/mtyas/Cardinal-3D/releases/tag/v0.77) remains a separate project.
+
+## Development
+
+Start with [development and contribution guidance](docs/DEVELOPMENT.md), [clean-build instructions](docs/BUILD-LIVE.md), [Show protocol](docs/SHOW-PROTOCOL.md), and [validation](docs/VALIDATION.md).

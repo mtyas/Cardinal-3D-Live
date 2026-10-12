@@ -24,6 +24,7 @@ func setup(owner_host, column: VBoxContainer, transport) -> void:
  send.pressed.connect(submit);column.add_child(send)
 
 func receive(data: Dictionary) -> void:
+ if not data.is_empty() and data.get("revision", -1) == room.get("revision", -2): return
  room=data
  var present := {}
  for member: Dictionary in data.get("members",[]):

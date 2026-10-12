@@ -1,12 +1,66 @@
-# Validation for 0.77 beta
+# Validation for Cardinal 3D Live
 
-The current checks cover the embedded Windows host and Quest-facing interface. Historical Mac baseline reports have been removed from the active tree.
+Use the pinned Godot 4.5.1 and Node 22.22.2. Preserve the installed show runtime;
+validate development outputs with temporary settings.
 
-- `tests/source_audit.py`: exact pinned Cardinal source and permitted UI/build integration; DSP sources remain unchanged.
-- `tests/embedded_host.py`: the 1,412-model registry, native DSP/audio, patch save/load, undo, MIDI input/panic, MixMaster faders/routing and concurrent UI/audio processing.
-- `embedded/godot/test_rack.gd`: original module panels, embedded menus, wrist settings, clean-settings recovery and New rack warning/cancel/reset. The reset must leave one Audio 2 module, no cables, one locked case and empty surroundings, without changing a saved patch file.
-- `tests/frontend_xr.gd`: controller/hand routing, captured controls, cable gestures, B/grip+B, selected modules and top-right close buttons.
-- `tests/frontend_layout.gd`: case movement/rotation, performance locks, delete warning, layout sidecars, joystick option scrolling, tutorial bounds and environments.
-- `tests/frontend_browser_controls.gd`: category selection and joystick browsing.
+## Automated checks
 
-The public portable package is also exercised with fresh settings and a system-only dependency path. Automated checks cannot measure every headset's perceived latency, comfort or hardware compatibility. The beta remains subject to user testing and further custom-widget coverage.
+```text
+python tests/release_checks.py
+python tests/source_audit.py
+node --test show-web/*.test.mjs
+python scripts/check_frontend.py <Godot.exe> tests/frontend_desktop.gd
+python scripts/check_frontend.py <Godot.exe> tests/frontend_xr.gd
+python scripts/check_frontend.py <Godot.exe> tests/frontend_layout.gd
+python scripts/check_frontend.py <Godot.exe> tests/frontend_hardware.gd
+python scripts/check_frontend.py <Godot.exe> tests/frontend_foundation.gd
+python scripts/check_frontend.py <Godot.exe> tests/show_space.gd
+python scripts/check_frontend.py <Godot.exe> tests/xr_keyboard.gd
+python scripts/check_embedded.py --build dist/embedded-full --resources dist/embedded-full/Cardinal --godot <Godot.exe> --minimum-models 1400 --graphics
+python scripts/check_show.py --godot <Godot.exe>
+python tests/show_host.py
+python tests/spatial_monitor.py
+```
+
+Run npm tests from `show-web` when your shell does not expand the Node glob above.
+`source_audit.py --source <Cardinal>` supports both Git checkouts and extracted
+matching source archives. The frontend runner imports a disposable copy, isolates
+settings/logs, and treats script errors, missing success markers and timeouts as
+failures. Desktop checks automatically use a real graphics viewport. XR tests
+simulate input; they do not certify a physical headset.
+
+`show_publish.gd` needs a running isolated relay plus native extension/resources
+and a Show patch. It is an integration test, not a standalone frontend test.
+The frontend runner requires `--integration` and `--project <prepared-project>`
+for that case. Never supply your normal recovery directory to a test.
+
+The three-slot handoff stress test needs a C++11 compiler:
+
+```sh
+g++ -std=c++11 -O2 -pthread tests/realtime_snapshot.cpp -o /tmp/cardinal-snapshot
+/tmp/cardinal-snapshot
+```
+
+CI runs browser tests, release-guard regressions, the C++ handoff test and privacy
+checks. Native Windows builds and physical headset/device acceptance remain
+separate until a suitable CI runner is provisioned.
+
+## Measurement
+
+```text
+python scripts/benchmark_foundation.py --dll <engine.dll> --resources <Cardinal-folder> --report reports/native.json
+node show-web/benchmark-relay.mjs 32 10 reports/relay.json
+```
+
+Record p95/p99/max callback times and misses against the configured block deadline,
+scene-processing time, startup, connected visitors, bytes and queued output.
+The native benchmark is unpaced stress without hardware; the relay probe runs
+synthetic clients on localhost. Use real headsets and remote connections to assess
+GPU frame-time stability, perceptual latency, packet loss and long sessions.
+`CARDINAL_3D_DIAGNOSTICS=1` adds frame percentiles, worst frame, draw calls and
+snapshot rates to the existing diagnostics.
+
+Required release acceptance: large patches; repeated load/add/delete; control
+and cable gestures; audio input-only patches; monitor orientation; source removal;
+visitor reconnect/resync; slow visitors; 44.1/48 kHz; sustained headset use and
+actual supported audio devices. Keep logs and reproduction patches with reports.

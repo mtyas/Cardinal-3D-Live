@@ -153,7 +153,7 @@ func _process(delta: float) -> void:
 				if peer.get_current_outbound_buffered_amount() < 65536: peer.send_text(JSON.stringify(data))
 				status.text = "LIVE · %d speakers · %d lights · Opus audience audio" % [data.speakers.size(),data.lights.size()]
 	# Offline UI draining prevents old samples from replaying on the next start.
-	if not publishing: native.show_audio()
+	if not publishing: native.show_audio_network()
 
 func _exit_tree() -> void:
 	peer.close()

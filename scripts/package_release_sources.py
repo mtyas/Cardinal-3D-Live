@@ -2,15 +2,24 @@
 """Create a recursive matching source archive, not GitHub's incomplete gitlink ZIP."""
 from pathlib import Path
 import argparse, hashlib, io, json, os, subprocess, tarfile
+from release_preflight import require_clean
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--cardinal', type=Path, required=True)
 parser.add_argument('--bindings', type=Path, required=True)
 parser.add_argument('--downloads', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
-parser.add_argument('--decoder', type=Path, help='Exact recursive browser decoder source')
-parser.add_argument('--opusscript', type=Path, help='Exact recursive server codec source')
+parser.add_argument('--decoder', type=Path, required=True, help='Exact recursive browser decoder source')
+parser.add_argument('--opusscript', type=Path, required=True, help='Exact recursive server codec source')
 args = parser.parse_args()
+require_clean(root)
+upstream=json.loads((root/'upstream.lock.json').read_text())
+deps=json.loads((root/'dependencies.lock.json').read_text())
+for directory,pin in [(args.cardinal,upstream['commit']),(args.bindings,deps['godot_bindings']),(args.decoder,deps['browser_decoder']['commit']),(args.opusscript,deps['server_codec']['commit'])]:
+    actual=subprocess.check_output(['git','-c','safe.directory='+str(directory),'-C',str(directory),'rev-parse','HEAD'],text=True).strip()
+    if actual!=pin: raise RuntimeError('Source pin mismatch: '+str(directory))
+    status=subprocess.check_output(['git','-c','safe.directory='+str(directory),'-C',str(directory),'submodule','status','--recursive'],text=True)
+    if any(not line.startswith(' ') for line in status.splitlines()): raise RuntimeError('Missing or mismatched recursive source: '+str(directory))
 version = (root / 'VERSION').read_text().strip()
 prefix = 'Cardinal-3D-Live-' + version + '-source'
 def git(directory, *arguments):

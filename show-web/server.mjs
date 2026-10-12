@@ -163,7 +163,9 @@ const broadcast = setInterval(() => {
   const full=JSON.stringify({...snapshot,revision:sceneRevision});
   const delta=patches?JSON.stringify({type:'room_delta',base,revision:sceneRevision,patches}):null;
   const now=Date.now();
+  const audience=JSON.stringify({type:'room',serverTime:snapshot.serverTime,members:snapshot.members,chat:snapshot.chat,nativeConnected:snapshot.nativeConnected,revision:sceneRevision});
   for (const ws of wss.clients) if(ws.readyState===WebSocket.OPEN&&ws.bufferedAmount<64*1024&&now-ws.lastSceneAt>=(ws.lowData?95:0)){
+    if(ws.isNative){ws.send(audience);ws.lastSceneAt=now;continue;}
     // Low-data clients skip frames: use their own baseline rather than sending full scenes again.
     let packet=full;
     if(ws.deltaScene&&ws.sceneBaseline){const localPatch=ws.sceneRevision===base?patches:scenePatch(ws.sceneBaseline,snapshot);if(localPatch){const encoded=ws.sceneRevision===base?delta:JSON.stringify({type:'room_delta',base:ws.sceneRevision,revision:sceneRevision,patches:localPatch});if(encoded.length<full.length)packet=encoded;}}

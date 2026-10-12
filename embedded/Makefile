@@ -14,7 +14,7 @@ RACK_EXTRA_LIBS := $(subst plugins-headless.a,plugins.a,$(RACK_EXTRA_LIBS))
 .PHONY: embedded force-embedded-link
 force-embedded-link:
 embedded: ../../bin/Cardinal3DEngine.dll
-$(BUILD_DIR)/Host.cpp.o: Host.cpp Host.h ShowModules.hpp
+$(BUILD_DIR)/Host.cpp.o: Host.cpp Host.h ShowModules.hpp RealtimeSnapshot.hpp
 	@mkdir -p $(dir $@)
 	$(CXX) $< $(BUILD_CXX_FLAGS) -DDISTRHO_PLUGIN_TARGET_STATIC -c -o $@
 # DPF's Windows MAPI adapter also contains the plugin implementation; Host.cpp

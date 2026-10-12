@@ -3,14 +3,12 @@ set -euo pipefail
 source_path="$1"
 jobs="${2:-4}"
 export CARDINAL_3D_BUILD_JOBS="$jobs"
-build_root=/root/cardinal3d
+build_root="${CARDINAL_3D_BUILD_ROOT:-/root/cardinal3d}"
 output=embedded
 if [[ "${4:-runtime}" == embedded-full ]]; then
-    build_root=/root/cardinal3d-full
+    build_root="${CARDINAL_3D_BUILD_ROOT:-/root/cardinal3d-full}"
     output=embedded-full
     mkdir -p "$build_root"
-    # Never share writable plugin archives with the confirmed prototype cache.
-    if [[ ! -d "$build_root/vendor" ]]; then cp -a --reflink=auto /root/cardinal3d/vendor "$build_root/vendor"; fi
     export CARDINAL_EMBEDDED_FULL=1 CARDINAL_EMBEDDED_GRAPHICS=1
 fi
 mkdir -p "$build_root"
@@ -19,6 +17,17 @@ rsync -a --exclude=.git --exclude=vendor --exclude=build --exclude=dist \
     --exclude=.tools --exclude=setup --exclude=.godot --exclude=__pycache__ \
     "$source_path/" "$build_root/"
 cd "$build_root"
+# Complete release sources can be staged without Git or an existing vendor cache.
+if [[ ! -d vendor/Cardinal && -f "$source_path/vendor/Cardinal/.source-snapshot.json" ]]; then
+    mkdir -p vendor
+    rsync -a "$source_path/vendor/Cardinal/" vendor/Cardinal/
+fi
+for dependency in godot-cpp asio-sdk; do
+    if [[ ! -d ".tools/$dependency" && -d "$source_path/.tools/$dependency" ]]; then
+        mkdir -p .tools
+        rsync -a "$source_path/.tools/$dependency/" ".tools/$dependency/"
+    fi
+done
 sed -i 's/\r$//' scripts/*.sh
 if [[ "${3:-False}" == True ]]; then exit 0; fi
 if [[ "${4:-runtime}" == embedded* ]]; then

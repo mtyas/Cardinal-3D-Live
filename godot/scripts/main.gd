@@ -87,6 +87,7 @@ var panning := false
 var snapshot: Dictionary = {}
 var status_timer := 0.0
 var cable_signature := ""
+var cable_views := {}
 var pending_mesh: MeshInstance3D
 var local_pending_cable := {}
 var pending_signature := ""
@@ -94,6 +95,7 @@ var performance_elapsed := 0.0
 var performance_frames := 0
 var performance_worst := 0.0
 var performance_previous_usec := 0
+var performance_samples := PackedFloat32Array()
 
 func _ready() -> void:
 	bridge = EmbeddedClient.new() if OS.get_environment("CARDINAL_3D_EMBEDDED") == "1" else BridgeClient.new()
@@ -559,9 +561,7 @@ func _rebuild_cables(descriptions: Array) -> void:
 	if signature == cable_signature:
 		return
 	cable_signature = signature
-	for child in cables.get_children():
-		cables.remove_child(child)
-		child.queue_free()
+	var present := {}
 	for cable: Dictionary in descriptions:
 		var output_id := str(cable["output_module"])
 		var input_id := str(cable["input_module"])
@@ -570,7 +570,22 @@ func _rebuild_cables(descriptions: Array) -> void:
 		var start: Vector3 = modules[output_id].port_position(int(cable["output_port"]), "output")
 		var end: Vector3 = modules[input_id].port_position(int(cable["input_port"]), "input")
 		var color := Color(str(cable.get("color", "#dd9456")))
-		_draw_wire(cables.to_local(start), cables.to_local(end), color, cables)
+		var id := str(cable.get("id", [output_id, cable["output_port"], input_id, cable["input_port"]]))
+		present[id] = true
+		var shape := str([cables.to_local(start), cables.to_local(end), color])
+		if cable_views.has(id) and cable_views[id].signature == shape: continue
+		if cable_views.has(id):
+			cable_views[id].node.queue_free()
+			cables.remove_child(cable_views[id].node)
+		var group := Node3D.new()
+		cables.add_child(group)
+		_draw_wire(cables.to_local(start), cables.to_local(end), color, group)
+		cable_views[id] = {"node":group, "signature":shape}
+	for id in cable_views.keys():
+		if not present.has(id):
+			cable_views[id].node.queue_free()
+			cables.remove_child(cable_views[id].node)
+			cable_views.erase(id)
 
 func _draw_wire(start: Vector3, end: Vector3, color: Color, parent_node: Node3D) -> void:
 	if start.distance_to(end) < 0.0001:
@@ -1028,16 +1043,19 @@ func _process(delta: float) -> void:
 		performance_previous_usec = now
 		performance_elapsed += frame_seconds
 		performance_frames += 1
+		if performance_samples.size() < 4096: performance_samples.append(frame_seconds * 1000)
 		performance_worst = maxf(performance_worst, frame_seconds)
 		if performance_elapsed >= 5:
+			performance_samples.sort()
 			print("VR timing: %.1f fps, worst %.1f ms, process %.1f ms, physics %.1f ms, draw calls %d" % [performance_frames / performance_elapsed, performance_worst * 1000, Performance.get_monitor(Performance.TIME_PROCESS) * 1000, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000, Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)])
 			var diagnostics := FileAccess.open(ProjectSettings.globalize_path("res://../vr-timing.json"), FileAccess.WRITE)
 			if diagnostics != null:
-				diagnostics.store_string(JSON.stringify({"fps": performance_frames / performance_elapsed, "worst_frame_ms": performance_worst * 1000, "process_ms": Performance.get_monitor(Performance.TIME_PROCESS) * 1000, "physics_ms": Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000, "draw_calls": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), "modules": modules.size(), "xr_focused": xr_session != null and xr_session.was_focused, "snapshot_hz": bridge.snapshot_count / performance_elapsed, "incoming_bytes": bridge.incoming.size(), "outgoing_bytes": bridge.outgoing.size() }))
+				diagnostics.store_string(JSON.stringify({"fps": performance_frames / performance_elapsed, "worst_frame_ms": performance_worst * 1000, "p95_frame_ms": performance_samples[int((performance_samples.size()-1)*0.95)], "p99_frame_ms": performance_samples[int((performance_samples.size()-1)*0.99)], "process_ms": Performance.get_monitor(Performance.TIME_PROCESS) * 1000, "physics_ms": Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000, "draw_calls": Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), "modules": modules.size(), "xr_focused": xr_session != null and xr_session.was_focused, "snapshot_hz": bridge.snapshot_count / performance_elapsed, "incoming_bytes": bridge.incoming.size(), "outgoing_bytes": bridge.outgoing.size() }))
 			bridge.snapshot_count = 0
 			performance_elapsed = 0
 			performance_frames = 0
 			performance_worst = 0
+			performance_samples.clear()
 	status_timer = maxf(status_timer - delta, 0)
 	if bridge.connected and status_timer == 0 and not snapshot.is_empty():
 		status_label.text = "%d modules · %d cables · %d fps" % [modules.size(), snapshot.get("cables", []).size(), Engine.get_frames_per_second()]

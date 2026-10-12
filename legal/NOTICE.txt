@@ -5,8 +5,8 @@ This software comes with no warranty. You may modify and redistribute its
 software under the GPL-3.0-or-later terms. See GPL-3.0.txt.
 
 This is an independent modified Cardinal host. It is not an official release
-of DISTRHO Cardinal, VCV Rack, Godot or Meta. It embeds the unchanged Cardinal
-DSP and adds a Godot/OpenXR frontend, VR interaction, Windows audio playback,
+of DISTRHO Cardinal, VCV Rack, Godot or Meta. It embeds Cardinal DSP with the audited Host Audio capture-cursor correction
+and adds a Godot/OpenXR frontend, VR interaction, Windows audio playback,
 MIDI input, case layout and environment controls.
 
 Cardinal: DISTRHO / Filipe Coelho and contributors, GPL-3.0-or-later.

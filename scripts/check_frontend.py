@@ -1,17 +1,61 @@
 #!/usr/bin/env python3
-"""Godot can exit zero after a script error; make frontend checks fail reliably."""
+"""Import and test a disposable frontend; script errors and timeouts are failures."""
 from pathlib import Path
-import subprocess
-import sys
+import argparse
 import os
+import shutil
+import subprocess
 import tempfile
 
-root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix='cardinal-frontend-') as isolated:
-    env = os.environ.copy()
-    env['CARDINAL_EMBEDDED_USER_DIR'] = isolated
-    display = ['--rendering-method', 'gl_compatibility', '--resolution', '1440x900'] if '--graphics' in sys.argv[3:] else ['--headless']
-    result = subprocess.run([sys.argv[1], *display, '--audio-driver', 'Dummy', '--path', str(root / 'godot'), '--script', sys.argv[2]], env=env, capture_output=True, text=True, timeout=60)
-output = result.stdout + result.stderr
-print(output, end='')
-sys.exit(1 if result.returncode or 'SCRIPT ERROR:' in output or '\nERROR:' in output or ': PASS' not in output else 0)
+ROOT = Path(__file__).resolve().parents[1]
+
+def run(command, env, timeout=60, marker=False):
+    process = subprocess.Popen(list(map(str, command)), env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True)
+        else:
+            process.kill()
+        output, _ = process.communicate()
+        raise RuntimeError('Frontend check timed out\n' + output)
+    print(output, end='')
+    if process.returncode or 'SCRIPT ERROR:' in output or 'ERROR:' in output or (marker and 'PASS' not in output):
+        raise RuntimeError('Frontend check failed')
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('godot', type=Path)
+    parser.add_argument('script')
+    parser.add_argument('--graphics', action='store_true')
+    parser.add_argument('--project', type=Path, default=ROOT / 'godot')
+    parser.add_argument('--integration', action='store_true', help='Keep explicit native/relay environment for prepared integration tests')
+    args = parser.parse_args()
+    script = (args.project / args.script[6:] if args.script.startswith('res://') else Path(args.script)).resolve()
+    if not script.is_file(): parser.error('Test script does not exist: ' + str(script))
+    if script.stem in ('show_publish', 'frontend_live_stream') and not args.integration:
+        parser.error('This test needs a prepared native/relay harness; use --integration with its environment')
+    graphics = args.graphics or script.stem == 'frontend_desktop'
+    with tempfile.TemporaryDirectory(prefix='cardinal-frontend-') as scratch:
+        scratch = Path(scratch)
+        project = scratch / 'project'
+        shutil.copytree(args.project, project, ignore=shutil.ignore_patterns('.godot', '*.log'))
+        shutil.copytree(ROOT/'tests', scratch/'tests', ignore=shutil.ignore_patterns('__pycache__'))
+        env = os.environ.copy()
+        if not args.integration:
+            for key in list(env):
+                if key.startswith(('CARDINAL_', 'XR_RUNTIME')): env.pop(key)
+        env['CARDINAL_EMBEDDED_USER_DIR'] = str(scratch / 'engine-settings')
+        Path(env['CARDINAL_EMBEDDED_USER_DIR']).mkdir()
+        for name in ('APPDATA', 'LOCALAPPDATA', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME'):
+            env[name] = str(scratch / name)
+            Path(env[name]).mkdir()
+        base = [args.godot.resolve(), '--audio-driver', 'Dummy', '--path', project,
+                '--log-file', scratch / 'godot.log']
+        run(base + ['--headless', '--editor', '--quit-after', '60', '--frame-delay', '100'], env)
+        display = ['--rendering-method', 'gl_compatibility', '--resolution', '1440x900'] if graphics else ['--headless']
+        run(base + display + ['--script', script], env, marker=True)
+
+if __name__ == '__main__': main()

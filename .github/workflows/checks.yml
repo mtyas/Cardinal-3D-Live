@@ -1,4 +1,4 @@
-name: Browser checks
+name: Foundation checks
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
@@ -11,6 +11,8 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/check_release_privacy.py
+      - run: python tests/release_checks.py
+      - run: g++ -std=c++11 -O2 -pthread tests/realtime_snapshot.cpp -o /tmp/cardinal-snapshot && /tmp/cardinal-snapshot
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

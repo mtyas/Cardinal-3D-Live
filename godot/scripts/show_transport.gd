@@ -10,6 +10,9 @@ var state := WebSocketPeer.STATE_CONNECTING
 var buffered := 0
 var scene := ""
 var room_state := ""
+var room_revision := 0
+var consumed_revision := -1
+var cached_room := {}
 var commands := []
 var assets := []
 var sent_assets := {}
@@ -33,9 +36,12 @@ func get_current_outbound_buffered_amount() -> int:
 func send_text(text: String) -> void:
  mutex.lock();scene=text;mutex.unlock()
 func room_snapshot() -> Dictionary:
- mutex.lock();var text=room_state;mutex.unlock()
- var data: Variant = JSON.parse_string(text) if not text.is_empty() else {}
- return data if data is Dictionary else {}
+ mutex.lock();var text=room_state;var revision=room_revision;mutex.unlock()
+ if revision != consumed_revision:
+  var data: Variant = JSON.parse_string(text) if not text.is_empty() else {}
+  cached_room = data if data is Dictionary else {}
+  consumed_revision = revision
+ return cached_room
 func send_command_text(text: String) -> void:
  mutex.lock()
  if commands.size()<16: commands.append(text)
@@ -58,7 +64,7 @@ func _run() -> void:
    if socket.was_string_packet():
     var text := packet.get_string_from_utf8()
     if text.begins_with('{"type":"room"'):
-     mutex.lock();room_state=text;mutex.unlock()
+     mutex.lock();room_state=text;room_revision+=1;mutex.unlock()
   var current=socket.get_ready_state()
   mutex.lock();state=current;buffered=socket.get_current_outbound_buffered_amount();mutex.unlock()
   if current==WebSocketPeer.STATE_CLOSED:break

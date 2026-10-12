@@ -37,6 +37,7 @@ bool requestMIDI() { return false; }
 #include <array>
 #include "cardinal3d/Cardinal3DBridge.hpp"
 #include "ShowModules.hpp"
+#include "RealtimeSnapshot.hpp"
 #define NANOSVGRAST_IMPLEMENTATION
 #include <nanosvgrast.h>
 
@@ -63,7 +64,8 @@ struct Host {
     std::vector<uint8_t> show_audio;
     std::mutex show_mutex;
     std::vector<std::pair<uint64_t, std::shared_ptr<cardinal3d::show::AudioRing>>> show_sources;
-    std::shared_ptr<std::vector<std::shared_ptr<cardinal3d::show::MonitorSource>>> monitor_sources=std::make_shared<std::vector<std::shared_ptr<cardinal3d::show::MonitorSource>>>();
+    RealtimeSnapshot<std::vector<std::shared_ptr<cardinal3d::show::MonitorSource>>> monitor_sources;
+    std::vector<cardinal3d::show::MonitorSource*> monitor_identity;
     std::atomic<bool> monitor_enabled{false};
     float monitor_limiter_gain=1.f;
     std::atomic<uint32_t> monitor_rate{48000};
@@ -242,10 +244,10 @@ const char* c3d_show_json(void* ptr) {
         real(root, "sample_rate", APP->engine->getSampleRate());
         auto* speakers = json_array(); auto* lights = json_array(); auto* objects = json_array(); auto* boards=json_array();
         std::vector<std::pair<uint64_t, std::shared_ptr<show::AudioRing>>> streams;
-        auto monitors=std::make_shared<std::vector<std::shared_ptr<show::MonitorSource>>>();
+        std::vector<std::shared_ptr<show::MonitorSource>> monitors;
         for (auto* widget : APP->scene->rack->getModules()) {
             if (auto* m = dynamic_cast<show::Speaker*>(widget->module)) {
-                streams.emplace_back(uint64_t(m->id), m->stream);monitors->push_back(m->monitor);
+                streams.emplace_back(uint64_t(m->id), m->stream);monitors.push_back(m->monitor);
                 auto* item = json_object(); cardinal3d::string(item, "id", std::to_string(m->id));
                 json_object_set_new(item, "position", json_pack("[fff]", double(m->values[show::Speaker::X].load(std::memory_order_relaxed)), double(m->values[show::Speaker::Y].load(std::memory_order_relaxed)), double(m->values[show::Speaker::Z].load(std::memory_order_relaxed))));
                 real(item, "yaw", m->values[show::Speaker::YAW].load(std::memory_order_relaxed));
@@ -274,7 +276,14 @@ const char* c3d_show_json(void* ptr) {
         }
         json_object_set_new(root, "speakers", speakers); json_object_set_new(root, "lights", lights);
         json_object_set_new(root,"objects",objects);json_object_set_new(root,"boards",boards);
-        std::atomic_store(&h->monitor_sources,monitors);
+        bool changed = monitors.size() != h->monitor_identity.size();
+        for (size_t i = 0; !changed && i < monitors.size(); ++i)
+            changed = monitors[i].get() != h->monitor_identity[i];
+        if (changed) {
+            h->monitor_identity.clear();
+            for (const auto& source : monitors) h->monitor_identity.push_back(source.get());
+            h->monitor_sources.publish(std::move(monitors));
+        }
         h->show_state = encode(root); json_decref(root);
         std::lock_guard<std::mutex> guard(h->show_mutex);
         h->show_sources = std::move(streams); h->show_rate = uint32_t(APP->engine->getSampleRate());h->monitor_rate.store(h->show_rate,std::memory_order_relaxed);
@@ -376,9 +385,9 @@ int c3d_process(void* ptr, const float* in_l, const float* in_r, float* out_l, f
         h->audio_busy.clear(std::memory_order_release); return 0;
     }
     const bool monitoring=h->monitor_enabled.load(std::memory_order_acquire);
-    auto monitors=std::atomic_load(&h->monitor_sources);
+    const auto& monitors=h->monitor_sources.read();
     if(monitoring){std::fill(out_l,out_l+frames,0.f);std::fill(out_r,out_r+frames,0.f);}
-    for(auto& source:*monitors){
+    for(const auto& source:monitors){
       auto& ring=source->ring;const uint32_t w=ring.write.load(std::memory_order_acquire),r=ring.read.load(std::memory_order_relaxed);
       if(monitoring){
         using S=cardinal3d::show::Speaker;auto& v=source->values;

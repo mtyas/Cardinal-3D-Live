@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Experimental engine DLL; does not replace or package the working VR runtime.
+# Build the embedded engine in dist; never replace an installed performance runtime.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
@@ -9,12 +9,12 @@ python3 scripts/install_bridge.py
 source="$root/vendor/Cardinal"
 target="$source/src/CardinalEmbedded"
 mkdir -p "$target"
-cp embedded/DeviceAudio.cpp embedded/Host.cpp embedded/Host.h embedded/ShowModules.hpp embedded/Makefile "$target/"
+cp embedded/DeviceAudio.cpp embedded/Host.cpp embedded/Host.h embedded/ShowModules.hpp embedded/RealtimeSnapshot.hpp embedded/Makefile "$target/"
 for file in CardinalPlugin.cpp CardinalCommon.cpp CardinalCommon-UI.cpp CardinalRemote.cpp CardinalUI.cpp common.cpp RemoteNanoVG.cpp RemoteWindow.cpp DistrhoPluginInfo.h glfw.cpp MenuBar.cpp Window.cpp distrho.rc; do
     ln -sf "../CardinalNative/$file" "$target/$file"
 done
 cd "$source"
-export PAWPAW_CI=1 PAWPAW_SKIP_TESTS=1
+source "$root/scripts/bootstrap_windows.sh"
 set +u
 source deps/PawPaw/local.env win64
 set -u
@@ -37,7 +37,10 @@ cd "$root"
 bindings="$root/.tools/godot-cpp"
 pin=e83fd0904c13356ed1d4c3d09f8bb9132bdc6b77
 if [[ ! -d "$bindings/.git" && ! -f "$bindings/.source-pin" ]]; then
-    git clone --depth 1 --branch godot-4.5-stable https://github.com/godotengine/godot-cpp.git "$bindings"
+    git init "$bindings"
+    git -C "$bindings" remote add origin https://github.com/godotengine/godot-cpp.git
+    git -C "$bindings" fetch --depth 1 origin "$pin"
+    git -C "$bindings" checkout --detach FETCH_HEAD
 fi
 if [[ -f "$bindings/.source-pin" ]]; then actual=$(cat "$bindings/.source-pin"); else actual=$(git -C "$bindings" rev-parse HEAD); fi
 [[ "$actual" == "$pin" ]] || { echo 'Godot binding pin mismatch' >&2; exit 1; }
@@ -58,3 +61,5 @@ cp embedded/godot/test_rack.gd dist/embedded/rack/
 if [[ "${CARDINAL_EMBEDDED_FULL:-0}" == 1 ]]; then
     python3 scripts/package_embedded_resources.py
 fi
+
+python3 scripts/build_manifest.py dist/embedded

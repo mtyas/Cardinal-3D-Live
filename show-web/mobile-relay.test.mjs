@@ -11,10 +11,11 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 test('mobile relay sends no unwanted audio, reconstructs scene deltas, resyncs and uses 64kbps automatic audio',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'cardinal-mobile-relay-')),file=join(directory,'session.json'),port=19884;
  const server=spawn(process.execPath,['server.mjs'],{cwd:new URL('.',import.meta.url),env:{...process.env,CARDINAL_SHOW_PORT:String(port),CARDINAL_SHOW_SESSION_PATH:file},stdio:'ignore'});
- let native,guest,timer,state,revision=0,full=0,deltas=0,binary=0,error=null;
+ let native,guest,timer,state,revision=0,full=0,deltas=0,binary=0,error=null,nativeRoom=null;
  try{
   let session;for(let i=0;i<80;i++){try{session=JSON.parse(await readFile(file,'utf8'));break;}catch{await pause(30);}}assert.ok(session);
   native=new WebSocket(session.url);guest=new WebSocket(`ws://127.0.0.1:${port}/room`,{origin:`http://localhost:${port}`});
+  native.on('message',(bytes,binary)=>{if(!binary){const message=JSON.parse(bytes);if(message.type==='room')nativeRoom=message;}});
   guest.on('message',(bytes,isBinary)=>{try{
    if(isBinary){binary++;assert.equal(bytes.toString('ascii',0,4),'C3DO');assert.equal(bytes.readUInt32LE(32),64);return;}
    const data=JSON.parse(bytes);if(data.type==='room'){state=data;revision=data.revision;full++;}
@@ -26,7 +27,7 @@ test('mobile relay sends no unwanted audio, reconstructs scene deltas, resyncs a
    native.send(JSON.stringify({type:'show',frame,sample_rate:48000,speakers:[speaker],lights:[],max_audio_kbps:128}));
    const bytes=Buffer.alloc(32+960*4);bytes.write('C3DA');bytes.writeUInt32LE(1,4);bytes.writeBigUInt64LE(1n,8);bytes.writeBigUInt64LE(BigInt(frame),16);bytes.writeUInt32LE(48000,24);bytes.writeUInt32LE(960,28);native.send(bytes);frame+=960;
   },20);
-  await pause(350);assert.equal(binary,0);assert.ok(deltas>1);assert.equal(state.show.sample_rate,48000);assert.ok(guest.extensions.includes('permessage-deflate'));
+  await pause(350);assert.equal(binary,0);assert.ok(nativeRoom);assert.equal(Object.hasOwn(nativeRoom,'show'),false);assert.ok(nativeRoom.members.length>=2);assert.ok(deltas>1);assert.equal(state.show.sample_rate,48000);assert.ok(guest.extensions.includes('permessage-deflate'));
   const oldFull=full;guest.send(JSON.stringify({type:'scene_resync'}));await pause(180);assert.ok(full>oldFull);
   guest.send(JSON.stringify({type:'audio_codec',codec:'opus'}));await pause(400);assert.ok(binary>5);assert.equal(error,null);
   guest.send(JSON.stringify({type:'audio_codec',codec:'off'}));await pause(100);const paused=binary;await pause(150);assert.equal(binary,paused);

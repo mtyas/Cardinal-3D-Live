@@ -5,7 +5,7 @@ import {speaker,disposeStage} from '/stage-materials.js';
 import {ChatBoards} from '/chat-board.js';
 import { RackScene } from '/rack-scene.js';
 export class ShowScene {
-  speakers = new Map(); lights = new Map(); queue = []; latest = null;
+  speakers = new Map(); lights = new Map(); queue = []; latest = null; lastVisuals = null;
   constructor(scene, audio) { this.scene = scene; this.audio = audio; this.chat=[];this.boards=new ChatBoards(scene);this.rack=new RackScene(scene); this.objects=new ShowObjects(scene); }
   receive(data) {
     if (!data) { this.clear(); return; }
@@ -19,7 +19,7 @@ export class ShowScene {
     for (const m of this.speakers.values()) { disposeStage(m); }
     for (const l of this.lights.values()) { l.traverse(n=>{n.geometry?.dispose();n.material?.dispose();}); l.target.removeFromParent(); l.removeFromParent(); l.dispose(); }
     this.boards.clear();this.rack.clear(); this.objects.clear();
-    this.speakers.clear(); this.lights.clear(); this.queue = []; this.latest = null; this.audio.reset();
+    this.speakers.clear(); this.lights.clear(); this.queue = []; this.latest = null; this.lastVisuals = null; this.audio.reset();
   }
   update() {
     if (!this.latest) return;
@@ -27,7 +27,7 @@ export class ShowScene {
     while (this.queue.length > 1 && (frame === null || this.queue[1].frame <= frame)) this.queue.shift();
     const state = this.queue[0] || this.latest;
     this.boards.update(state.boards||[],this.chat);
-    this.rack.update(state.visuals);
+    if(state.visuals!==this.lastVisuals||this.rack.needsUpdate){this.rack.update(state.visuals);this.lastVisuals=state.visuals;}
     this.objects.update(state.objects||[],frame===null?0:(frame-state.frame)/state.sample_rate);
     const ids = new Set();
     for (const s of state.speakers) {

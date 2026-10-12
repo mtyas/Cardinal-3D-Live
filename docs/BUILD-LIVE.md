@@ -1,40 +1,100 @@
-# Building Cardinal 3D Live locally
+# Building Cardinal 3D Live
 
-The public repository contains project/overlay sources and exact upstream pins. The complete release source archive additionally contains recursive Cardinal sources, Godot bindings, GPL ASIO SDK and dependency sources. Use that archive when rebuilding without relying on upstream source availability.
+The project pins Cardinal and its recursive submodules in `upstream.lock.json`,
+Godot 4.5.1, bindings and codec sources in `dependencies.lock.json`, and exact web
+packages/integrities in `show-web/package-lock.json`.
 
-## Windows native build
+## Windows native build from a fresh checkout
 
-The supported development path is a Linux/WSL MinGW cross-build with caches on the Linux filesystem. Python 3, Git, rsync, make, scons, MinGW POSIX compilers and the pinned dependency toolchain are required. See `scripts/build_embedded_windows.sh` for installation/build details and `upstream.lock.json` for the Cardinal/Godot pins.
+Use a dedicated Debian/Ubuntu WSL distribution and keep the compiler cache on
+its Linux filesystem. The checkout on Windows may contain spaces; the staged
+Linux build path must not. Install the prerequisites inside that distribution:
 
-On Windows, create your own WSL distribution and use:
+```sh
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv git rsync make scons \
+  autoconf automake autopoint build-essential curl cmake file jq \
+  libglib2.0-dev-bin libtool lsb-release meson gperf patchelf pkg-config \
+  uuid-dev zlib1g-dev libffi-dev libreadline-dev mingw-w64
+```
+
+The native build uses MinGW's POSIX compiler variant. If your distro's CMake is
+older than the pinned 3.31.8, install that version in a Python virtual environment
+and put its `bin` directory on the build PATH. The alternative upstream OS package
+installer is opt-in through `CARDINAL_3D_INSTALL_BUILD_DEPS=1`; it can also install
+Wine and i386 packages. The normal build does not modify OS packages.
+
+From the project checkout in PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build_local_windows.ps1 -Distribution YourBuildDistribution -FullRegistry
 ```
 
-The driver uses a separate full-registry cache, installs the audited overlay, builds the engine/bindings and copies output to `dist/embedded-full`. It retains compiler caches for incremental rebuilds. It does not require Docker. The first build takes substantially longer than incremental builds.
+The driver stages to `/root/cardinal3d-full`, fetches the exact Cardinal commit
+and recursive gitlinks, verifies/fetches the GPL-option ASIO SDK, installs the
+project overlay, bootstraps PawPaw dependencies, and builds engine/bindings/assets.
+It no longer needs `/root/cardinal3d/vendor` or another project's build cache.
+`-BuildRoot /root/cardinal-live-clean` selects a separate source/build directory.
+PawPaw retains its separate upstream dependency cache under `~/PawPawBuilds`.
 
-The build uses the GPLv3 option of the pinned official ASIO SDK. `scripts/fetch_asio.py` verifies its checksum. Individual module DSP is unchanged except the audited Host Audio capture cursor correction; `tests/source_audit.py` checks this against pinned sources.
+Output is `dist/embedded-full`; an installed performance runtime is never
+replaced. `BUILD-MANIFEST.json` fingerprints native source inputs and DLL outputs.
+Run [validation](VALIDATION.md) before running or distributing the build.
 
-## Browser/server
+Directly from a Linux checkout without spaces, with those dependencies installed:
 
-Install Node.js 22 and run:
+```sh
+CARDINAL_EMBEDDED_FULL=1 CARDINAL_EMBEDDED_GRAPHICS=1 bash scripts/build_embedded_windows.sh
+python3 tests/source_audit.py
+```
 
-```powershell
+The first build downloads substantial source and compiles the complete registry.
+Exact source pins do not imply byte-identical binaries across compiler versions.
+Record distro, compiler, CMake and SCons versions when reproducing a release.
+
+## Corresponding-source archives
+
+GitHub's automatic ZIP is not complete. Use the matching release source archive
+for recursive Cardinal, bindings, ASIO and codec/dependency sources. Extract it
+into a fresh directory. The WSL driver can stage its supplied vendor/binding/SDK
+sources, and bootstrap seeds PawPaw's download cache from `dependency-sources`.
+The source audit verifies archive hashes without requiring `.git` directories.
+Toolchain installation and any dependencies absent from that archive can still
+require network access; this is not a claim of a fully offline toolchain image.
+
+## Browser and relay
+
+Install Node 22.22.2, then:
+
+```sh
 cd show-web
 npm ci --ignore-scripts
 npm test
 npm start
 ```
 
-The visitor client is bundled at server startup with pinned esbuild. It contains Three.js and the browser Opus fallback, with all dependency notices preserved. The server injects an immutable, hash-named bundle URL; worklet files and room HTML are served by the same origin.
+The server bundles its browser entry point with pinned esbuild at startup.
+See [HOSTING.md](HOSTING.md) for invitations, HTTPS/WSS and optional welcome proxy.
+The native performer publishes locally; exposing the native host key remotely is
+not a collaboration feature.
 
-## Validation and packaging
+## Release preparation
 
-Run the full engine/library checks against your build using `scripts/check_embedded.py`, and the desktop/XR frontend checks with `scripts/check_frontend.py` and pinned Godot. `tests/frontend_desktop.gd` exercises toolbar sizing and arrow navigation. Audio-device/spatial-monitor tests are under `tests/`.
+Use a clean committed project checkout. Build the native output from those same
+inputs. Fetch the exact recursive browser/server codec sources and create the
+matching archive first:
 
-Use `scripts/package_live_windows.py` with the native build, pinned Godot executable, Node executable and their notices. It copies a clean factory runtime, web dependencies and guides, imports the Godot resources, then generates launchers, provenance and checksums. It never packages user recovery, private hosting files or session keys.
+```text
+python scripts/package_release_sources.py --cardinal <recursive-Cardinal> --bindings <godot-cpp> --downloads <dependency-tarballs> --decoder <wasm-audio-decoders> --opusscript <opusscript> --output <matching-source.tar.gz>
+python scripts/package_live_windows.py --build dist/embedded-full --godot <Godot-4.5.1.exe> --node <Node-22.22.2.exe> --source-archive <matching-source.tar.gz> --check-only
+```
 
-Use `scripts/package_release_sources.py` with recursive Cardinal, binding and dependency source directories to produce the matching source archive. Supply the exact browser decoder sources recorded in `dependencies.lock.json`. Keep the binary/source archives together when distributing.
+Remove `--check-only` to create a new portable release directory and ZIP. Preflight
+rejects a dirty project, stale/missing native fingerprints, modified DLLs, wrong
+runtime versions, missing web dependencies/notices and mismatched source pins.
+It also exercises the installed esbuild executable. Run `npm ci` on the packaging
+platform; do not copy Linux `node_modules` into a Windows release.
 
-The repository's CI runs browser tests. Hardware/GPU/audio acceptance and release packaging are performed separately; an automated browser pass does not certify every audio interface or headset.
+Keep binary/source archives and notices together. Packaging records the source
+archive checksum. Run privacy checks on the final unpacked output and perform
+hardware acceptance separately. Do not infer hardware certification from CI.

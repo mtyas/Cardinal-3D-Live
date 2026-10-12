@@ -4,15 +4,23 @@ from pathlib import Path
 import json
 import subprocess
 import sys
+import argparse
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts"))
 from host_audio_cursor import patch_host_audio
+from source_snapshot import verify_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
-source = ROOT / 'vendor/Cardinal'
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--source', type=Path, default=ROOT / 'vendor/Cardinal')
+source = parser.parse_args().source.resolve()
 def git(*args):
     return subprocess.check_output(['git', '-C', str(source), *args], text=True)
 
 pin = json.loads((ROOT / 'upstream.lock.json').read_text())
+if (source / '.source-snapshot.json').is_file() and not (source / '.git').exists():
+    count = verify_snapshot(source, pin['commit'])
+    print(f'PASS: {count} matching corresponding-source files, exact pin and snapshot hashes')
+    sys.exit(0)
 assert git('rev-parse', 'HEAD').strip() == pin['commit']
 changed = set(git('diff', 'HEAD', '--name-only').splitlines())
 allowed = {'src/CardinalUI.cpp', 'src/override/ModuleWidget.cpp', 'src/override/Window.cpp', 'src/Makefile.cardinal.mk', 'plugins/Makefile', 'dpf', 'src/Rack', 'plugins/Cardinal/src/HostAudio.cpp'}

@@ -2,14 +2,20 @@
 """Build a clean portable Live release; never copy private user/config folders."""
 from pathlib import Path
 import argparse,hashlib,json,shutil,subprocess,zipfile
+from release_preflight import preflight
 
 ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser()
 parser.add_argument('--build',type=Path,required=True)
 parser.add_argument('--godot',type=Path,required=True)
 parser.add_argument('--node',type=Path,required=True)
+parser.add_argument('--source-archive',type=Path,required=True)
+parser.add_argument('--check-only',action='store_true')
 parser.add_argument('--output',type=Path,default=ROOT/'dist/releases')
 args=parser.parse_args()
+source_commit=preflight(ROOT,args.build,args.godot,args.node,args.source_archive)
+if args.check_only:
+ print('PASS: release inputs and matching sources verified');raise SystemExit(0)
 version=(ROOT/'VERSION').read_text().strip()
 folder=args.output/f'Cardinal-3D-Live-{version}-Windows-x64'
 folder.mkdir(parents=True,exist_ok=False)
@@ -62,8 +68,8 @@ if exist "%ProgramFiles%\\Meta Horizon\\Support\\oculus-runtime\\oculus_openxr_6
 if errorlevel 1 pause
 '''
  (folder/name).write_text(launch,encoding='ascii',newline='\r\n')
-manifest={'project':'Cardinal 3D Live','version':version,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
- 'source_archive':f'Cardinal-3D-Live-{version}-source.tar.gz','node':subprocess.check_output([str(args.node),'--version'],text=True).strip(),'files_sha256':{}}
+manifest={'project':'Cardinal 3D Live','version':version,'source_commit':source_commit,
+ 'source_archive':args.source_archive.name,'source_archive_sha256':hashlib.sha256(args.source_archive.read_bytes()).hexdigest(),'node':subprocess.check_output([str(args.node),'--version'],text=True).strip(),'files_sha256':{}}
 for file in sorted(folder.rglob('*')):
  if file.is_file():manifest['files_sha256'][file.relative_to(folder).as_posix()]=hashlib.sha256(file.read_bytes()).hexdigest()
 (folder/'RELEASE-MANIFEST.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
