@@ -70,6 +70,7 @@ var reset_new_patch_workspace := false
 var layout_restore_path := ""
 var settings_button: Button
 var toolbar: HFlowContainer
+var desktop_patch_menu: MenuButton
 var path_edit: LineEdit
 var dialog: FileDialog
 var generation := ""
@@ -258,6 +259,7 @@ func _build_ui() -> void:
 		audio_settings.backend = bridge
 		audio_column.add_child(audio_settings)
 	var patch_menu := MenuButton.new()
+	desktop_patch_menu = patch_menu
 	patch_menu.text = "Patch"
 	patch_menu.add_theme_font_size_override("font_size", 16)
 	toolbar.add_child(patch_menu)
@@ -705,6 +707,7 @@ func _desktop_navigation(delta: float) -> void:
 	if xr_session != null and xr_session.active: return
 	if module_browser != null and module_browser.visible: return
 	if settings_panel.visible or dialog.visible or overlay.visible or dragging or moving: return
+	if desktop_patch_menu != null and desktop_patch_menu.get_popup().visible: return
 	var focused := get_viewport().gui_get_focus_owner()
 	if focused is LineEdit or focused is TextEdit or focused is Range or focused is OptionButton: return
 	var horizontal := float(Input.is_physical_key_pressed(KEY_RIGHT)) - float(Input.is_physical_key_pressed(KEY_LEFT))
@@ -721,6 +724,9 @@ func _desktop_navigation(delta: float) -> void:
 	motion += right.normalized() * horizontal
 	if motion.length_squared() > 0:
 		target += motion.limit_length(1.0) * minf(delta, 0.05) * 1.8
+		target.x = clampf(target.x, -40.0, 40.0)
+		target.y = clampf(target.y, -1.0, 15.0)
+		target.z = clampf(target.z, -40.0, 40.0)
 		_update_camera()
 
 func _update_camera() -> void:
