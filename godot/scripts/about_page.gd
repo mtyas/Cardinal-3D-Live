@@ -6,7 +6,7 @@ var entries := []
 func setup(owner_host) -> void:
 	host = owner_host
 	var title := Label.new()
-	title.text = "Cardinal 3D Live · 0.5 alpha"
+	title.text = "Cardinal 3D Live · 0.6 preview"
 	title.add_theme_font_size_override("font_size", 28)
 	add_child(title)
 	var text := Label.new()

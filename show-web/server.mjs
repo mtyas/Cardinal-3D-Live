@@ -2,7 +2,7 @@
 import http from 'node:http';
 import { Worker } from 'node:worker_threads';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -12,6 +12,16 @@ import { ShowHistory } from './show-history.mjs';
 import {channelLink} from './telegram-announcer.mjs';
 import {scenePatch} from './scene-delta.js';
 import { Room } from './room.mjs';
+import { ControlRelay } from './control-relay.mjs';
+import {audioQuality} from './audio-quality.mjs';
+import {RtcAudioRelay} from './rtc-audio-relay.mjs';
+import {cloudflareTurnProvider} from './cloudflare-turn.mjs';
+import {mergeVisualValues} from './visual-values.mjs';
+const controls=new ControlRelay((socket,message)=>{
+ if(rtc.sendControl(socket,message))return true;
+ if(!socket||socket.readyState!==WebSocket.OPEN||socket.bufferedAmount>=65536)return false;
+ socket.send(JSON.stringify(message));return true;
+});
 import { audioBlocks, validateShow } from './show-protocol.mjs';
 const assets = new Map(); let assetBytes=0;
 let nativePublisher = null, showState = null;
@@ -19,6 +29,9 @@ const sessionPath = process.env.CARDINAL_SHOW_SESSION_PATH || fileURLToPath(new 
 
 let hosting={};
 if(process.env.CARDINAL_SHOW_HOSTING_CONFIG)hosting=JSON.parse(await readFile(process.env.CARDINAL_SHOW_HOSTING_CONFIG,'utf8'));
+const cfTurn=hosting.webrtc?.cloudflare_turn;
+const iceProvider=cfTurn?cloudflareTurnProvider({...cfTurn,api_token_file:resolve(dirname(process.env.CARDINAL_SHOW_HOSTING_CONFIG),cfTurn.api_token_file)}):undefined;
+const rtc=new RtcAudioRelay({config:hosting.webrtc||{},iceProvider,send:(socket,message)=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));},quality:socket=>audioQuality(socket,showState?.max_audio_kbps||64)});
 const publicAddress=publicOrigin(process.env.CARDINAL_SHOW_PUBLIC_ORIGIN||hosting.public_origin);
 const bindAddress=process.env.CARDINAL_SHOW_BIND||hosting.bind||'127.0.0.1';
 if(bindAddress!=='127.0.0.1'&&!publicAddress)throw Error('A public HTTPS origin and invitation are required for non-local hosting');
@@ -34,12 +47,12 @@ encoder.on('message', m=>{
  if(!showState||!m.packet)return;
  const sourceId=Buffer.from(m.packet).readBigUInt64LE(8).toString();
  if(!showState.speakers.some(s=>s.id===sourceId))return;
+ rtc.packet(m);
  const cap=showState.max_audio_kbps;
  for(const guest of wss.clients){
   if(guest.audioCodec!=='opus'||guest.readyState!==WebSocket.OPEN||guest.bufferedAmount>=128*1024)continue;
-  const requested=guest.member?.audioQuality||'auto';
-  const quality=Math.min(cap,requested==='auto'?(guest.lowData||guest.bufferedAmount>32*1024?64:96):Number(requested));
-  if(m.kbps===quality)guest.send(m.packet,{binary:true,compress:false});
+  const quality=audioQuality(guest,cap);
+  if(m.kbps===quality){guest.send(m.packet,{binary:true,compress:false});guest.audioBytes+=m.packet.length;}
  }
 });
 const token = randomBytes(24).toString('hex');
@@ -50,6 +63,7 @@ const profile=JSON.parse(await readFile(profilePath,'utf8'));
 access.publicOpen=false;
 const showHistory=new ShowHistory(process.env.CARDINAL_SHOW_HISTORY_PATH||join(dirname(sessionPath),'show-history.json'));
 await showHistory.load();
+const relayVersion=JSON.parse(await readFile(new URL('./package.json',import.meta.url),'utf8')).version;
 const clientBundle=await buildClient();
 const root = fileURLToPath(new URL('.', import.meta.url));
 const routes = new Map([
@@ -74,9 +88,9 @@ const server = http.createServer(async (req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   if (req.method === 'GET' && pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ app: 'cardinal-3d-show-preview', nativeConnected: Boolean(nativePublisher), visitors:room.members.size-(room.performer?1:0), capacity:publicAddress?100:63, publicOrigin:publicAddress })); return;
+    res.end(JSON.stringify({ app: 'cardinal-3d-show-preview', version:relayVersion, webrtc:hosting.webrtc?.enabled!==false, webrtcPeers:rtc.peers.size, nativeConnected: Boolean(nativePublisher), visitors:room.members.size-(room.performer?1:0), capacity:publicAddress?100:63, publicOrigin:publicAddress })); return;
   }
-  if(req.method==='GET'&&pathname==='/show-info'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({profile:{...profile,past:[...showHistory.completed(),...(profile.past||[])]},live:Boolean(nativePublisher&&showState),publicOpen:access.publicOpen,showId:access.publicOpen?showHistory.active?.id||null:null,localPreview:!publicAddress,visitors:room.members.size-(room.performer?1:0),capacity:publicAddress?100:63}));return;}
+  if(req.method==='GET'&&pathname==='/show-info'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({profile:{...profile,title:access.publicOpen?(showState?.session_title||profile.title):profile.title,past:[...showHistory.completed(),...(profile.past||[])]},live:Boolean(nativePublisher&&showState),publicOpen:access.publicOpen,showId:access.publicOpen?showHistory.active?.id||null:null,localPreview:!publicAddress,visitors:room.members.size-(room.performer?1:0),capacity:publicAddress?100:63}));return;}
   if(req.method==='GET'&&pathname==='/notifications'){res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({provider:'telegram',url:channelLink({channel:profile.telegram_channel}),enabled:false}));return;}
   if(req.method==='GET'&&pathname===clientBundle.path){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'});res.end(clientBundle.bytes);return;}
   const cached=assets.get(pathname.slice('/show-assets/'.length));
@@ -92,41 +106,67 @@ const server = http.createServer(async (req, res) => {
 });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024,
  perMessageDeflate:{threshold:1024,serverNoContextTakeover:true,clientNoContextTakeover:true,zlibDeflateOptions:{level:3},concurrencyLimit:4} });
+function receiveAudio(ws,bytes){
+ if (!showState) return;
+        const blocks = audioBlocks(bytes);
+        const sources = new Set(showState.speakers.map(s => s.id));
+        if (blocks.some(b => !sources.has(b.id) || b.rate !== showState.sample_rate)) return;
+        const qualities=new Set(rtc.qualities());
+        for (const guest of wss.clients) {
+         if(guest.audioCodec==='opus'&&guest.readyState===WebSocket.OPEN)qualities.add(audioQuality(guest,showState.max_audio_kbps));
+         if(guest!==ws&&guest.audioCodec==='pcm'&&guest.readyState===WebSocket.OPEN&&guest.bufferedAmount<256*1024){guest.send(bytes,{binary:true,compress:false});guest.audioBytes+=bytes.length;}
+        }
+        if(qualities.size&&encoderReady&&encodingJobs<12){encodingJobs++;encoder.postMessage({type:'audio',bytes:Uint8Array.from(bytes),cap:showState.max_audio_kbps,qualities:[...qualities]});}
+}
+let nativeAudio=null;
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://localhost');
   const origin = req.headers.origin;
   if(!authorizeUpgrade({path:url.pathname,origin,address:req.socket.remoteAddress,host:url.searchParams.get('host'),invite:url.searchParams.get('invite')},access)){socket.destroy();return;}
   const isHost=url.searchParams.has('host');
-  wss.handleUpgrade(req,socket,head,ws=>{ws.transport=socket;wss.emit('connection',ws,isHost,url.pathname==='/performer',validSecret(url.searchParams.get('invite'),inviteToken));});
+  wss.handleUpgrade(req,socket,head,ws=>{ws.transport=socket;wss.emit('connection',ws,isHost,url.pathname==='/performer',validSecret(url.searchParams.get('invite'),inviteToken),url.pathname==='/performer-audio');});
 });
-wss.on('connection', (ws, isHost, isNative, invited) => {
+wss.on('connection', (ws, isHost, isNative, invited, isNativeAudio) => {
+  if(isNativeAudio){
+   if(nativeAudio){ws.close(1008,'Audio publisher already connected');return;}
+   nativeAudio=ws;ws.isNativeAudio=true;ws.alive=true;ws.on('pong',()=>{ws.alive=true;});
+   let budget=240;const replenish=setInterval(()=>{budget=240;},1000);
+   ws.on('message',(bytes,binary)=>{try{if(!binary||--budget<0)throw Error('Invalid audio');receiveAudio(ws,bytes);}catch{ws.close(1008,'Invalid native audio');}});
+   ws.on('error',()=>{});ws.on('close',()=>{clearInterval(replenish);if(nativeAudio===ws)nativeAudio=null;});return;
+  }
   let member;
   if(publicAddress&&!isHost&&room.members.size-(room.performer?1:0)>=100){ws.close(1008,'Room is full');return;}
   try { member = room.join(isHost); } catch (e) { ws.close(1008, e.message); return; }
   ws.invited=invited;ws.isNative=isNative;ws.isHost=isHost;
-  ws.member=member;ws.audioCodec='off';ws.sceneRevision=-1;ws.lastSceneAt=0;ws.wireAt=Date.now();ws.wireBytes=ws.transport.bytesWritten;
+  ws.member=member;ws.audioCodec='off';ws.audioBytes=0;ws.sceneSending=false;ws.sceneRevision=-1;ws.lastSceneAt=0;ws.wireAt=Date.now();ws.wireBytes=ws.transport.bytesWritten;
   if (isNative) { encoder.postMessage({type:'reset'});nativePublisher = ws; room.update(member.id,{type:'identity',name:profile.artist});room.update(member.id, {type:'pose',position:[0,1.65,-3],yaw:0}); }
   ws.send(JSON.stringify({ type: 'welcome', id: member.id, role: member.role }));
+  if(!isNative)ws.send(JSON.stringify({type:'rtc_available',enabled:hosting.webrtc?.enabled!==false}));
+  controls.join(member.id,ws);if(isNative)controls.setHost(ws);
   let budget = isNative ? 240 : 60, chatAt = 0;
+  if(!isNative)ws.acceptRtcControl=text=>{
+   if(ws.readyState!==WebSocket.OPEN||--budget<0){ws.close(1008,'Too many messages');return;}
+   try{const message=JSON.parse(text);if(message?.type?.startsWith('control_'))controls.handle(ws,member.id,message);}catch{ws.close(1008,'Invalid control message');}
+  };
   ws.alive = true;
   ws.on('pong', () => { ws.alive = true; });
   const replenish = setInterval(() => { budget = isNative ? 240 : 60; }, 1000);
   ws.on('message', (bytes, binary) => {
     if (--budget < 0) { ws.close(1008, 'Too many messages'); return; }
     try {
-      if (!isNative && (binary || bytes.length > 4096)) throw Error('Visitor packet too large');
+      if (!isNative && (binary || bytes.length > 65536)) throw Error('Visitor packet too large');
       if (binary) {
         if (!isNative) throw Error('Audio requires a native show');
-        if (!showState) return;
-        const blocks = audioBlocks(bytes);
-        const sources = new Set(showState.speakers.map(s => s.id));
-        if (blocks.some(b => !sources.has(b.id) || b.rate !== showState.sample_rate)) return;
-        let opusListeners=false;
-        for (const guest of wss.clients) {if(guest.audioCodec==='opus')opusListeners=true;if(guest!==ws&&guest.audioCodec==='pcm'&&guest.readyState===WebSocket.OPEN&&guest.bufferedAmount<256*1024)guest.send(bytes,{binary:true,compress:false});}
-        if(opusListeners&&encoderReady&&encodingJobs<12){encodingJobs++;encoder.postMessage({type:'audio',bytes:Uint8Array.from(bytes),cap:showState.max_audio_kbps});}
+        receiveAudio(ws,bytes);
         return;
       }
       const data = JSON.parse(bytes);
+      if(!isNative&&data?.type==='rtc_answer'){rtc.answer(ws,data);return;}
+      if(!isNative&&bytes.length>4096)throw Error('Visitor packet too large');
+      if(!isNative&&data?.type==='rtc_request'){rtc.request(ws);return;}
+      if(!isNative&&data?.type==='rtc_stop'){rtc.stop(ws);return;}
+      if(typeof data?.type==='string'&&data.type.startsWith('control_')&&bytes.length>4096)throw Error('Control packet too large');
+      if(controls.handle(ws,member.id,data))return;
       if(data.type==='asset'){
         if(!isNative || !/^[a-f0-9]{64}$/.test(data.id) || !['image/png','application/json'].includes(data.media) || typeof data.data!=='string'||data.data.length>700000)throw Error('Invalid asset');
         const payload=Buffer.from(data.data,'base64');
@@ -140,8 +180,8 @@ wss.on('connection', (ws, isHost, isNative, invited) => {
         if(data.performer_pose)room.update(member.id,{type:'pose',...data.performer_pose});
         const wasPublic=access.publicOpen;access.publicOpen=data.public_show===true;
         if(publicAddress&&wasPublic&&!access.publicOpen)for(const guest of wss.clients)if(!guest.isNative&&!guest.isHost&&!guest.invited)guest.close(1008,'This session is now invitation-only');
-        showHistory.update(access.publicOpen,profile.title);
-        showState = data;encoder.postMessage({type:'retain',ids:data.speakers.map(s=>s.id)});return;
+        showHistory.update(access.publicOpen,data.session_title||profile.title);
+        showState = mergeVisualValues(showState,data);rtc.updateScene(showState);encoder.postMessage({type:'retain',ids:data.speakers.map(s=>s.id)});return;
       }
       if (!data || typeof data !== 'object') return;
       if(data.type==='audio_codec'){ws.audioCodec=data.codec==='opus'&&encoderReady?'opus':data.codec==='pcm'?'pcm':'off';return;}
@@ -152,25 +192,28 @@ wss.on('connection', (ws, isHost, isNative, invited) => {
     } catch { ws.close(1008, 'Invalid message'); }
   });
   ws.on('error', () => {});
-  ws.on('close', () => { clearInterval(replenish); room.leave(member.id); if (nativePublisher === ws) { nativePublisher = null; showState = null;access.publicOpen=false;showHistory.update(false,profile.title);encoder.postMessage({type:'reset'}); } });
+  ws.on('close', () => { clearInterval(replenish);rtc.stop(ws); controls.leave(member.id,ws);room.leave(member.id); if (nativePublisher === ws) { nativePublisher = null;nativeAudio?.close(); showState = null;rtc.updateScene(null);access.publicOpen=false;showHistory.update(false,profile.title);encoder.postMessage({type:'reset'}); } });
 });
-let previousSnapshot=null,sceneRevision=0;
+let previousSnapshot=null,sceneRevision=0,lastFullLength=0;
 const broadcast = setInterval(() => {
+  controls.tick();
   const snapshot={...room.snapshot(),show:showState,nativeConnected:Boolean(nativePublisher)};
   // Room members mutate in place; retain an independent baseline for the next diff.
   snapshot.members=snapshot.members.map(m=>({...m,position:[...m.position],...(m.reaction?{reaction:{...m.reaction}}:{})}));
   const base=sceneRevision++;const patches=previousSnapshot?scenePatch(previousSnapshot,snapshot):null;
-  const full=JSON.stringify({...snapshot,revision:sceneRevision});
+  let full=null;const fullPacket=()=>{if(full===null){full=JSON.stringify({...snapshot,revision:sceneRevision});lastFullLength=full.length;}return full;};
   const delta=patches?JSON.stringify({type:'room_delta',base,revision:sceneRevision,patches}):null;
   const now=Date.now();
   const audience=JSON.stringify({type:'room',serverTime:snapshot.serverTime,members:snapshot.members,chat:snapshot.chat,nativeConnected:snapshot.nativeConnected,revision:sceneRevision});
-  for (const ws of wss.clients) if(ws.readyState===WebSocket.OPEN&&ws.bufferedAmount<64*1024&&now-ws.lastSceneAt>=(ws.lowData?95:0)){
+  for (const ws of wss.clients) if(!ws.isNativeAudio&&ws.readyState===WebSocket.OPEN&&!ws.sceneSending&&ws.bufferedAmount<16*1024&&now-ws.lastSceneAt>=(ws.lowData?95:0)){
     if(ws.isNative){ws.send(audience);ws.lastSceneAt=now;continue;}
     // Low-data clients skip frames: use their own baseline rather than sending full scenes again.
-    let packet=full;
-    if(ws.deltaScene&&ws.sceneBaseline){const localPatch=ws.sceneRevision===base?patches:scenePatch(ws.sceneBaseline,snapshot);if(localPatch){const encoded=ws.sceneRevision===base?delta:JSON.stringify({type:'room_delta',base:ws.sceneRevision,revision:sceneRevision,patches:localPatch});if(encoded.length<full.length)packet=encoded;}}
-    ws.send(packet);ws.sceneRevision=sceneRevision;ws.lastSceneAt=now;ws.sceneBaseline=ws.deltaScene?snapshot:null;
-    if(ws.deltaScene&&now-ws.wireAt>=2000){const bytes=ws.transport.bytesWritten;ws.send(JSON.stringify({type:'connection_stats',bytesPerSecond:(bytes-ws.wireBytes)*1000/(now-ws.wireAt)}));ws.wireAt=now;ws.wireBytes=bytes;}
+    let packet=null;
+    if(ws.deltaScene&&ws.sceneBaseline){const localPatch=ws.sceneRevision===base?patches:scenePatch(ws.sceneBaseline,snapshot);if(localPatch){const encoded=ws.sceneRevision===base?delta:JSON.stringify({type:'room_delta',base:ws.sceneRevision,revision:sceneRevision,patches:localPatch});if(!lastFullLength||encoded.length<lastFullLength)packet=encoded;}}
+    // Coalesce visual updates while compression/socket writes are in progress.
+    // Otherwise async compression can queue stale scenes ahead of live audio.
+    ws.sceneSending=true;ws.send(packet??fullPacket(),()=>{ws.sceneSending=false;});ws.sceneRevision=sceneRevision;ws.lastSceneAt=now;ws.sceneBaseline=ws.deltaScene?snapshot:null;
+    if(ws.deltaScene&&now-ws.wireAt>=2000){const bytes=ws.transport.bytesWritten;ws.send(JSON.stringify({type:'connection_stats',bytesPerSecond:(bytes-ws.wireBytes)*1000/(now-ws.wireAt),audioBytesPerSecond:ws.audioBytes*1000/(now-ws.wireAt)}));ws.wireAt=now;ws.wireBytes=bytes;ws.audioBytes=0;}
   }
   previousSnapshot=snapshot;
 }, 50);
@@ -200,4 +243,4 @@ server.listen(port, bindAddress, async () => {
   if(!publicAddress)console.log(`Performer preview: http://localhost:${port}/#host=${token}`);
   console.log('Native Show audio and visuals can connect. Internet mode requires the configured HTTPS proxy; public capacity is not yet load-certified.');
 });
-process.on('SIGINT', () => { encoder.terminate(); clearInterval(broadcast); clearInterval(heartbeat); for (const ws of wss.clients) ws.terminate(); wss.close(); server.close(); });
+process.on('SIGINT', () => { rtc.close();encoder.terminate(); clearInterval(broadcast); clearInterval(heartbeat); for (const ws of wss.clients) ws.terminate(); wss.close(); server.close(); });

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import * as THREE from 'three';
-import { ShowObjects } from '/show-objects.js';
-import {speaker,disposeStage} from '/stage-materials.js';
-import {ChatBoards} from '/chat-board.js';
-import { RackScene } from '/rack-scene.js';
+import { ShowObjects } from './show-objects.js';
+import {speaker,disposeStage} from './stage-materials.js';
+import {ChatBoards} from './chat-board.js';
+import { RackScene } from './rack-scene.js';
 export class ShowScene {
   speakers = new Map(); lights = new Map(); queue = []; latest = null; lastVisuals = null;
   constructor(scene, audio) { this.scene = scene; this.audio = audio; this.chat=[];this.boards=new ChatBoards(scene);this.rack=new RackScene(scene); this.objects=new ShowObjects(scene); }
@@ -13,20 +13,23 @@ export class ShowScene {
     if (this.latest && (data.frame < this.latest.frame || data.sample_rate !== this.latest.sample_rate)) this.queue = [];
     this.latest = data;
     if (this.queue.at(-1)?.frame !== data.frame) this.queue.push(data);
-    while (this.queue.length > 40) this.queue.shift();
+    // Retain visual history for the audio worklet's bounded recovery window.
+    while (this.queue.length > 80) this.queue.shift();
   }
   clear() {
     for (const m of this.speakers.values()) { disposeStage(m); }
     for (const l of this.lights.values()) { l.traverse(n=>{n.geometry?.dispose();n.material?.dispose();}); l.target.removeFromParent(); l.removeFromParent(); l.dispose(); }
     this.boards.clear();this.rack.clear(); this.objects.clear();
-    this.speakers.clear(); this.lights.clear(); this.queue = []; this.latest = null; this.lastVisuals = null; this.audio.reset();
+    this.speakers.clear(); this.lights.clear(); this.queue = []; this.latest = null; this.displayed=null;this.lastVisuals = null; this.audio.reset();
   }
   update() {
     if (!this.latest) return;
     const frame = this.audio.frame(this.latest.sample_rate);
-    while (this.queue.length > 1 && (frame === null || this.queue[1].frame <= frame)) this.queue.shift();
-    const state = this.queue[0] || this.latest;
-    this.boards.update(state.boards||[],this.chat);
+    // Show live state while sound is buffering, but preserve history so lights
+    // can synchronize immediately when delayed playback starts or recovers.
+    while (this.queue.length > 1 && frame !== null && this.queue[1].frame <= frame) this.queue.shift();
+    const state = frame===null?this.latest:(this.queue[0] || this.latest);this.displayed=state;
+    this.boards.update(state.boards||[],this.chat,state.session_title||'');
     if(state.visuals!==this.lastVisuals||this.rack.needsUpdate){this.rack.update(state.visuals);this.lastVisuals=state.visuals;}
     this.objects.update(state.objects||[],frame===null?0:(frame-state.frame)/state.sample_rate);
     const ids = new Set();

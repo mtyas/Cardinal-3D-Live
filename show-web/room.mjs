@@ -38,8 +38,8 @@ export class Room {
     } else if (data.type === 'chat' && typeof data.text === 'string') {
       const text = data.text.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 400);
       if (text) {
-        this.chat.push({ id: randomUUID(), name: m.name, color: m.color, text });
-        this.chat = this.chat.slice(-40);
+        // Previous room snapshots retain this array for delta comparison.
+        this.chat = [...this.chat, { id: randomUUID(), name: m.name, color: m.color, text }].slice(-40);
       }
     }
     // There is deliberately no synth-edit command on the visitor protocol.

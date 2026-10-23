@@ -10,6 +10,20 @@ func run() -> void:
 	assert(host.show_stage.peer.get_ready_state() == WebSocketPeer.STATE_OPEN, "Room did not connect")
 	assert(host.show_stage.latest.speakers.size() == 2, "Missing native speakers")
 	assert(host.show_stage.latest.lights.size() == 1, "Missing CV light")
+	if OS.get_environment("CARDINAL_REQUIRE_MIXER_METERS")=="1":
+		var meter_count := 0
+		var before := []
+		for view in host.modules.values():
+			meter_count+=view.meters.size()
+			for meter in view.meters.values():before.append(meter.meter_material.get_shader_parameter("levels"))
+		assert(meter_count==25,"Missing MixMaster and AuxExpander live meters")
+		await create_timer(1.0).timeout
+		var after := []
+		for view in host.modules.values():
+			for meter in view.meters.values():after.append(meter.meter_material.get_shader_parameter("levels"))
+		assert(before!=after,"Mixer overlay values must animate on the host")
+		assert(host.bridge.live_update_count>10,"Compact live polling did not run")
+		print("PASS: 25 host mixer meters animate through compact live updates")
 	assert(not host.show_stage.visual_state.panels.is_empty(), "Missing shared rack panels")
 	assert(not host.show_stage.visual_state.environment.is_empty(), "Missing shared scenery")
 	assert(host.show_stage.visual_state.panels.any(func(p): return not p.texture.is_empty()), "Missing actual panel artwork")
@@ -26,6 +40,8 @@ func run() -> void:
 	host.module_browser.show_browser()
 	await create_timer(3.0).timeout
 	assert(host.show_stage.publishing, "Opening the module browser must retain the audio sender")
+	var hold := float(OS.get_environment("CARDINAL_SHOW_TEST_HOLD_SECONDS"))
+	if hold > 0.0: await create_timer(minf(hold,180.0)).timeout
 	for speaker in host.show_stage.latest.speakers:
 		assert(speaker.dropped_samples == 0, "UI work must not overflow the Show audio ring")
 	print("PASS: real Godot native Show publisher connected, streamed audio and CV fixtures")

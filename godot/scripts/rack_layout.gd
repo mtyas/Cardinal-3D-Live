@@ -88,7 +88,7 @@ func _build_controls() -> void:
 		for button in layout_buttons: button.disabled = not enabled)
 	column.add_child(mode_button)
 	var help := Label.new()
-	help.text = "Hold a case edge and aim the pointer to position it. Stick up/down pushes/pulls the rack. Twist your wrist to turn it upright.\nSelect a module title, then choose its destination rack below."
+	help.text = "Choose a rack, set its position and rotation, then choose a module or row to move into it. Layout changes keep the same synth and cables." if session.has_method("build_layout_controls") else "Hold a case edge and aim the pointer to position it. Stick up/down pushes/pulls the rack. Twist your wrist to turn it upright.\nSelect a module title, then choose its destination rack below."
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	help.custom_minimum_size.x = 500
 	column.add_child(help)
@@ -96,6 +96,10 @@ func _build_controls() -> void:
 	picker.custom_minimum_size.y = 42
 	column.add_child(picker)
 	picker.item_selected.connect(func(index: int): active_case = index)
+	if session.has_method("build_layout_controls"): session.build_layout_controls(column)
+	var actions := GridContainer.new()
+	actions.columns = 2
+	column.add_child(actions)
 	for entry in [
 		["Add empty rack", add_case],
 		["Delete selected rack…", request_delete],
@@ -108,10 +112,12 @@ func _build_controls() -> void:
 		var button := Button.new()
 		button.text = entry[0]
 		button.custom_minimum_size.y = 42
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		button.pressed.connect(entry[1])
 		button.disabled = not layout_mode
 		layout_buttons.append(button)
-		column.add_child(button)
+		actions.add_child(button)
 	_refresh_picker()
 	delete_dialog = ConfirmationDialog.new()
 	delete_dialog.title = "Delete rack?"
@@ -124,6 +130,7 @@ func _refresh_picker() -> void:
 	picker.clear()
 	for index in range(cases.size()): picker.add_item("Rack %d" % (index + 1))
 	picker.select(active_case)
+	if session.has_method("refresh_layout_controls"): session.refresh_layout_controls()
 
 func add_case() -> void:
 	if not layout_mode or cases.size() >= 32: return
@@ -217,6 +224,7 @@ func bring_here() -> void:
 	cases[active_case].root.global_transform = Transform3D(facing, session.headset.global_position + facing * Vector3(-0.3, 0.15, -1.2))
 	sync()
 	save()
+	if session.has_method("refresh_layout_controls"): session.refresh_layout_controls()
 
 func arrange(style: int) -> void:
 	if not layout_mode: return
@@ -238,6 +246,7 @@ func arrange(style: int) -> void:
 		cases[index].root.global_transform = Transform3D(basis, head + facing * offset)
 	sync()
 	save()
+	if session.has_method("refresh_layout_controls"): session.refresh_layout_controls()
 
 func begin_grab(index: int, sample: Dictionary) -> void:
 	if not layout_mode: return

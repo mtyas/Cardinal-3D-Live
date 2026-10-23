@@ -25,6 +25,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--vr', action='store_true')
     parser.add_argument('--show', action='store_true', help='Use the separate Show test runtime, settings and starter')
+    parser.add_argument('--manual-live', action='store_true', help='Choose the session name and start broadcasting from Live')
     parser.add_argument('--session', type=Path, help='Connection file written by the running Show relay')
     parser.add_argument('--build', type=Path, help='Explicit development build; otherwise use the saved launch copy')
     parser.add_argument('--godot', type=Path)
@@ -53,7 +54,8 @@ def main():
         raise RuntimeError(f'Show relay connection file not found: {session}')
     if args.show and not session.is_file():
         print('No Show relay connection file found. Start the relay first, or use --session to select its file.', flush=True)
-    if args.show: env['CARDINAL_SHOW_AUTO_START'] = '1'
+    env.pop('CARDINAL_SHOW_AUTO_START', None)
+    if args.show and not args.manual_live: env['CARDINAL_SHOW_AUTO_START'] = '1'
     env['CARDINAL_EMBEDDED_RESOURCES'] = str(build / 'Cardinal')
     env['CARDINAL_EMBEDDED_USER_DIR'] = str(args.user_directory.resolve())
     env.pop('CARDINAL_EMBEDDED_PATCH', None)

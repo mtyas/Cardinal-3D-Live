@@ -3,11 +3,14 @@ import * as THREE from 'three';
 import { VRButton } from '/vendor/VRButton.js';
 import { appearancePixels } from '/appearance.js';
 import { ShowAudio } from '/show-audio.js';
+import {RtcAudio} from './rtc-audio.js';
 import { ShowScene } from '/show-scene.js';
 import { PerformerHands } from '/performer-hands.js';
 import {applyScenePatch} from '/scene-delta.js';
 import {TouchNavigation} from '/touch-navigation.js';
 import {VisitorHud} from '/visitor-hud.js';
+import {RemoteControls} from '/remote-controls.js';
+import {RoomInterface} from './room-interface.js';
 
 const $ = id => document.getElementById(id);
 const touchDevice=matchMedia('(pointer:coarse)').matches;
@@ -39,26 +42,36 @@ renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 document.body.appendChild(renderer.domElement);
 const vrButton = VRButton.createButton(renderer, { optionalFeatures: ['local-floor', 'bounded-floor'] });
-document.body.appendChild(vrButton);
+$('vr-entry').appendChild(vrButton);
 vrButton.hidden = true;
 const scene = new THREE.Scene();
 const showAudio = new ShowAudio(), showScene = new ShowScene(scene, showAudio);
+const rtcAudio=new RtcAudio({audio:showAudio,send});showAudio.rtc=rtcAudio;
+rtcAudio.onActive=active=>{roomInterface.sound(showAudio.ready,active,liveShow,showAudio.volume===0);send({type:'audio_codec',codec:active?'off':showAudio.ready?showAudio.codec:'off'});$('audio-buffering').disabled=active;};
+showAudio.onTransportPreference=()=>rtcAudio.update();
+try{$('audio-route').value=localStorage.getItem('cardinal-show-audio-route')||'auto';}catch{}
+rtcAudio.mode=$('audio-route').value;
+$('audio-route').onchange=()=>{const mode=$('audio-route').value;try{localStorage.setItem('cardinal-show-audio-route',mode);}catch{}rtcAudio.setMode(mode);};
 showAudio.setLowData(lowData);
-showAudio.onCodecFallback=async()=>{try{await showAudio.enable(true);send({type:'audio_codec',codec:'opus'});$('enable-audio').textContent='Sound enabled · compressed spatial audio';visitorHud.setAudio('Spatial sound enabled');}catch{send({type:'audio_codec',codec:'off'});visitorHud.setAudio('Retry spatial sound');}};
+try{$('audio-buffering').value=localStorage.getItem('cardinal-show-buffering')||'adaptive';}catch{}
+showAudio.setBuffering($('audio-buffering').value);
+$('audio-buffering').onchange=()=>{const mode=$('audio-buffering').value;try{localStorage.setItem('cardinal-show-buffering',mode);}catch{}showAudio.setBuffering(mode);};
+showAudio.onCodecFallback=async()=>{try{await showAudio.enable(true);send({type:'audio_codec',codec:showAudio.rtcActive?'off':'opus'});$('enable-audio').textContent='Sound enabled';roomInterface.sound(true,showAudio.rtcActive,liveShow,showAudio.volume===0);visitorHud.setAudio('Spatial sound enabled');}catch{send({type:'audio_codec',codec:'off'});visitorHud.setAudio('Retry spatial sound');}};
 let liveShow = false;
 let enablingAudio=false;
 async function enableAudio(){
  if(enablingAudio)return;enablingAudio=true;
- try { await showAudio.enable(); send({type:'audio_codec',codec:showAudio.codec}); if (showScene.latest) showAudio.configure(showScene.latest); $('enable-audio').textContent='Sound enabled · compressed spatial audio';visitorHud.setAudio('Spatial sound enabled'); }
+ try { await showAudio.enable(); send({type:'audio_codec',codec:showAudio.rtcActive?'off':showAudio.codec}); if (showScene.latest) showAudio.configure(showScene.latest);rtcAudio.update(); $('enable-audio').textContent='Sound enabled';roomInterface.sound(true,showAudio.rtcActive,liveShow,showAudio.volume===0);visitorHud.setAudio('Spatial sound enabled'); }
  catch { $('enable-audio').textContent='Try enabling sound again';visitorHud.setAudio('Retry spatial sound'); }
  finally{enablingAudio=false;}
 }
 $('enable-audio').onclick=enableAudio;
+$('name').addEventListener('keydown',event=>{if(event.key==='Enter'&&!$('join').disabled){event.preventDefault();$('join').click();}});
 try { $('audio-quality').value = localStorage.getItem('cardinal-show-audio-quality') || 'auto'; } catch {}
 $('audio-quality').onchange = () => {
   try { localStorage.setItem('cardinal-show-audio-quality', $('audio-quality').value); } catch {}
   send({type:'audio_quality',quality:$('audio-quality').value});
-  send({type:'audio_codec',codec:showAudio.ready?showAudio.codec:'off'});
+  send({type:'audio_codec',codec:showAudio.rtcActive?'off':showAudio.ready?showAudio.codec:'off'});
   visitorHud.setQuality($('audio-quality').selectedOptions[0].textContent);
 };
 $('data-saver').onchange=()=>{lowData=$('data-saver').checked;try{localStorage.setItem('cardinal-show-low-data',String(lowData));}catch{}renderer.setPixelRatio(Math.min(devicePixelRatio,lowData?1:1.5));showAudio.setLowData(lowData);send({type:'client_features',delta:true,lowData});};
@@ -84,13 +97,19 @@ for (const x of [-3.2, 3.2]) {
   const light = new THREE.SpotLight(x < 0 ? '#74e6ff' : '#f282cf', 25, 15, 0.5, 0.7);
   light.position.set(x, 4, -2); light.target.position.set(0, 0, -3); decorations.add(light, light.target);
 }
-let socket, myId, joined = false, members = new Map(), history = [], yaw = 0, pitch = 0;
+let socket, myId, joined = false, members = new Map(), history = [], historyKnown = false, yaw = 0, pitch = 0;
 let networkState=null,networkRevision=0;
 let serverOffset = 0, myReaction = null, reactionReadyAt = 0, reactionCaption = '';
 const reactions = [{kind:'glow',label:'Glow'}, {kind:'sparkles',label:'Sparkles'}, {kind:'shake',label:'Shake'}, {kind:'grow',label:'Grow'}];
 const keys = new Set(), clock = new THREE.Clock();
+const roomInterface=new RoomInterface({onPanelChange:()=>{keys.clear();touchNavigation.reset();}});
+let previousVolume=1;
+function listeningVolume(value){showAudio.setVolume(value);$('listening-volume').value=String(value);if(value>0)previousVolume=value;roomInterface.sound(showAudio.ready,showAudio.rtcActive,liveShow,value===0);}
+$('listening-volume').oninput=()=>listeningVolume(Number($('listening-volume').value));
+$('mute-audio').onclick=()=>listeningVolume(showAudio.volume===0?previousVolume:0);
+$('quick-audio').onclick=()=>showAudio.ready?roomInterface.open('sound',$('quick-audio')):enableAudio();
 const worldPosition = new THREE.Vector3(), quaternion = new THREE.Quaternion(), euler = new THREE.Euler(0, 0, 0, 'YXZ');
-function send(data) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(data)); }
+function send(data) { if (socket?.readyState !== WebSocket.OPEN)return false;if(data.type?.startsWith('control_')&&rtcAudio.sendControl(data))return true;if(socket.bufferedAmount>=65536)return false;socket.send(JSON.stringify(data));return true; }
 function react(kind) { if (joined && Date.now() - serverOffset >= reactionReadyAt) send({ type: 'reaction', kind }); }
 for (const item of reactions) $('react-' + item.kind).onclick = () => react(item.kind);
 function updateIdentity(name, color, color2, pattern) {
@@ -169,8 +188,10 @@ function updateRoom(data) {
   liveShow = Boolean(data.nativeConnected); showScene.chat=data.chat||[];showScene.receive(data.show);
   const qualityCap = data.show?.max_audio_kbps || 128;
   for (const option of $('audio-quality').options) option.disabled = option.value !== 'auto' && Number(option.value) > qualityCap;
-  $('status').textContent = liveShow ? 'Live · Performer' : 'Waiting for the performer';
-  $('audio-transport').textContent = liveShow ? (!showAudio.ready?'Sound off · enable spatial sound to listen.':`Compressed audio · ${showAudio.receivedQuality||'waiting for'} kb/s per speaker`) : 'Waiting for performer audio.';
+  $('status').textContent = liveShow ? 'Live performance' : 'Waiting for the host';
+  roomInterface.role(Boolean(remoteControls.client.permission));visitorHud.setRole(Boolean(remoteControls.client.permission));roomInterface.sound(showAudio.ready,showAudio.rtcActive,liveShow,showAudio.volume===0);
+  const people=data.members.filter(m=>m.role!=='performer').length;const count=`${people} ${people===1?'listener':'listeners'} in the room`;if($('room-count').textContent!==count)$('room-count').textContent=count;
+  $('audio-transport').textContent = liveShow ? (!showAudio.ready?'Sound off · enable spatial sound to listen.':(showAudio.rtcActive?rtcAudio.playbackStatus():`Compressed audio · ${showAudio.receivedQuality||'waiting for'} kb/s per speaker · ${showAudio.playbackStatus()}${rtcAudio.status?' · '+rtcAudio.status:''}`)) : 'Waiting for performer audio.';
   const active = new Set();
   for (const member of data.members) {
     if (member.id === myId) {
@@ -193,6 +214,7 @@ function updateRoom(data) {
   }
   for (const [id, object] of members) if (!active.has(id)) { disposeObject(object); members.delete(id); }
   if (JSON.stringify(history) !== JSON.stringify(data.chat)) {
+    if(historyKnown&&data.chat.length)roomInterface.unread();
     history = data.chat; $('messages').replaceChildren();
     for (const entry of history) {
       const p = document.createElement('p'), name = document.createElement('strong'); name.textContent = entry.name + ': '; name.style.color = entry.color;
@@ -200,6 +222,7 @@ function updateRoom(data) {
     }
     $('messages').scrollTop = $('messages').scrollHeight;visitorHud.setHistory(history);
   }
+  historyKnown=true;
 }
 $('join').onclick = () => {
   if (socket && socket.readyState < 2) return;
@@ -218,24 +241,26 @@ $('join').onclick = () => {
   socket.onmessage = event => {
     if (event.data instanceof ArrayBuffer) { showAudio.packet(event.data); return; }
     const data = JSON.parse(event.data);
+    if(data.type?.startsWith('rtc_')){rtcAudio.handle(data).catch(()=>rtcAudio.fail('negotiation failed'));return;}
+    if(typeof data.type==='string'&&data.type.startsWith('control_')){remoteControls.receive(data);roomInterface.role(Boolean(remoteControls.client.permission));visitorHud.setRole(Boolean(remoteControls.client.permission));return;}
     if (data.type === 'welcome') {
       clearTimeout(joinTimeout);
-      myId = data.id; joined = true;
+      myId = data.id; joined = true;historyKnown=false;
       send({type:'audio_quality',quality:$('audio-quality').value});
-      send({type:'audio_codec',codec:showAudio.ready?showAudio.codec:'off'});
+      send({type:'audio_codec',codec:showAudio.rtcActive?'off':showAudio.ready?showAudio.codec:'off'});
       send({type:'client_features',delta:true,lowData});networkState=null;networkRevision=0;
       if (data.role === 'performer') rig.position.set(0, 0.25, -3);
       updateIdentity($('name').value, $('color').value, $('color2').value, $('pattern').value);
-      $('welcome').hidden = true; $('chat').hidden = false; vrButton.hidden = false;$('hud-toggle').hidden=false;setHudHidden(touchDevice||hudHidden);$('touch-controls').hidden=!touchDevice;
+      $('welcome').hidden = true;roomInterface.setJoined(true);vrButton.hidden = false;$('hud-toggle').hidden=false;setHudHidden(false);$('touch-controls').hidden=!touchDevice;
       $('status').textContent = `${data.role === 'performer' ? 'Performer preview' : 'Visitor'} · Show room · audio not connected`;
     } else if (data.type === 'room') {networkState=data;networkRevision=data.revision||0;updateRoom(data);}
     else if(data.type==='room_delta'){
       if(data.base!==networkRevision||!networkState){send({type:'scene_resync'});return;}
       try{networkState=applyScenePatch(networkState,data.patches);networkRevision=data.revision;updateRoom(networkState);}catch{send({type:'scene_resync'});}
     }
-    else if(data.type==='connection_stats')$('data-rate').textContent=`Live stream ${(data.bytesPerSecond/1024).toFixed(0)} KB/s · ${lowData?'data saver':'full updates'}`;
+    else if(data.type==='connection_stats')$('data-rate').textContent=`Live stream ${(data.bytesPerSecond/1024).toFixed(1)} KB/s · audio ${((data.audioBytesPerSecond||0)/1024).toFixed(1)} KB/s · ${lowData?'data saver':'full updates'}`;
   };
-  socket.onclose = event => { clearTimeout(joinTimeout); joined = false; showScene.clear(); $('status').textContent = 'Disconnected · reload or try entering again'; $('error').textContent = event.reason || 'Connection closed. Check the launcher window and try again.'; };
+  socket.onclose = event => { clearTimeout(joinTimeout); joined = false;roomInterface.setJoined(false);$('welcome').hidden=false;$('hud-toggle').hidden=true;$('touch-controls').hidden=true;remoteControls.disconnect();rtcAudio.disconnect();showScene.clear(); $('status').textContent = 'Disconnected · reload or try entering again'; $('error').textContent = event.reason || 'Connection closed. Check the launcher window and try again.'; };
   socket.onerror = () => { $('error').textContent = 'Cannot connect to the room.'; };
 };
 $('chat-form').onsubmit = event => { event.preventDefault(); send({ type: 'chat', text: $('message').value }); $('message').value = '';visitorHud.setDraft(''); };
@@ -244,10 +269,9 @@ $('profile-form').onsubmit = event => {
   event.preventDefault(); updateIdentity($('profile-name').value, $('profile-color').value, $('profile-color2').value, $('profile-pattern').value); $('profile').open = false;
 };
 let hudHidden=false;
-function setHudHidden(hidden){if(hidden&&visitorHud.dragging)visitorHud.release(visitorHud.dragging);hudHidden=hidden;$('chat').hidden=!joined||hidden;$('status').hidden=hidden;visitorHud.group.visible=renderer.xr.isPresenting&&!hidden;$('hud-toggle').textContent=hidden?(touchDevice?'Chat & sound':'Show HUD · H'):(touchDevice?'Close panel':'Hide HUD · H');$('hud-toggle').setAttribute('aria-pressed',String(hidden));}
+function setHudHidden(hidden){if(hidden&&visitorHud.dragging)visitorHud.release(visitorHud.dragging);hudHidden=hidden;roomInterface.setHidden(hidden);visitorHud.group.visible=renderer.xr.isPresenting&&!hidden;$('hud-toggle').textContent=hidden?'Show interface · H':'Hide interface · H';$('hud-toggle').setAttribute('aria-pressed',String(hidden));}
 $('hud-toggle').onclick=()=>setHudHidden(!hudHidden);
-$('collapse').onclick = () => { $('messages').hidden = !$('messages').hidden; };
-addEventListener('keydown', event => { if (!['INPUT', 'TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {if(renderer.xr.isPresenting&&visitorHud.handleKey(event)){event.preventDefault();return;}if(event.code==='KeyH'&&joined&&!event.repeat)setHudHidden(!hudHidden);else keys.add(event.code);} });
+addEventListener('keydown', event => { if (!['INPUT', 'TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {if(renderer.xr.isPresenting&&visitorHud.handleKey(event)){event.preventDefault();return;}if(event.code==='KeyH'&&joined&&!event.repeat)setHudHidden(!hudHidden);else if(!roomInterface.active)keys.add(event.code);} });
 addEventListener('keyup', event => keys.delete(event.code));
 addEventListener('blur', () => { keys.clear(); });
 const touchNavigation=new TouchNavigation(renderer.domElement,$('move-pad'),$('move-thumb'),(dx,dy)=>{
@@ -260,21 +284,24 @@ const touchNavigation=new TouchNavigation(renderer.domElement,$('move-pad'),$('m
 const visitorHud=new VisitorHud(scene,{onSend:text=>send({type:'chat',text}),onReact:react,onAudio:enableAudio,onQuality:()=>{const menu=$('audio-quality'),options=[...menu.options].filter(o=>!o.disabled);menu.value=options[(options.findIndex(o=>o.value===menu.value)+1)%options.length].value;menu.onchange();},onHide:()=>setHudHidden(true),onDraft:text=>{$('message').value=text;},onPlaced:pose=>{try{localStorage.setItem('cardinal-show-vr-hud',JSON.stringify(pose));}catch{}}});
 visitorHud.setQuality($('audio-quality').selectedOptions[0].textContent);
 const raycaster = new THREE.Raycaster();
+const remoteControls=new RemoteControls({send,rack:showScene.rack,canvas:renderer.domElement,camera,scene,panel:$('collaboration-panel'),audio:showAudio});
+rtcAudio.onControl=message=>{remoteControls.receive(message);roomInterface.role(Boolean(remoteControls.client.permission));visitorHud.setRole(Boolean(remoteControls.client.permission));};
 const controllers=[];
 for (let i = 0; i < 2; i++) {
   const controller = renderer.xr.getController(i); rig.add(controller);controllers.push(controller);
   controller.addEventListener('connected',event=>{controller.userData.inputSource=event.data;});
-  controller.addEventListener('disconnected',()=>{visitorHud.release(controller);controller.userData.inputSource=null;});
+  controller.addEventListener('disconnected',()=>{visitorHud.release(controller);remoteControls.release(controller);controller.userData.inputSource=null;});
   const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -3)]), new THREE.LineBasicMaterial({ color: '#83e7ff' })); controller.add(line);
   controller.addEventListener('selectstart', () => {
     controller.getWorldPosition(worldPosition); controller.getWorldQuaternion(quaternion);
     raycaster.set(worldPosition,new THREE.Vector3(0,0,-1).applyQuaternion(quaternion));
-    visitorHud.activate(visitorHud.hit(raycaster),controller);
+    const hudHit=visitorHud.hit(raycaster);
+    if(hudHit)visitorHud.activate(hudHit,controller);else remoteControls.select(controller,raycaster);
   });
-  controller.addEventListener('selectend',()=>visitorHud.release(controller));
+  controller.addEventListener('selectend',()=>{visitorHud.release(controller);remoteControls.release(controller);});
 }
-renderer.xr.addEventListener('sessionstart',()=>{pitch=0;camera.rotation.set(0,0,0);camera.position.set(0,0,0);visitorHud.pendingPlacement=true;visitorHud.restoreOnEnter=true;setHudHidden(false);$('touch-controls').hidden=true;touchNavigation.reset();keys.clear();});
-renderer.xr.addEventListener('sessionend',()=>{for(const controller of controllers)visitorHud.release(controller);camera.position.set(0,1.65,0);visitorHud.group.visible=false;$('touch-controls').hidden=!touchDevice||!joined;});
+renderer.xr.addEventListener('sessionstart',()=>{document.body.classList.add('xr-active');roomInterface.open(null);pitch=0;camera.rotation.set(0,0,0);camera.position.set(0,0,0);visitorHud.pendingPlacement=true;visitorHud.restoreOnEnter=true;setHudHidden(false);$('touch-controls').hidden=true;touchNavigation.reset();keys.clear();});
+renderer.xr.addEventListener('sessionend',()=>{document.body.classList.remove('xr-active');for(const controller of controllers)visitorHud.release(controller);remoteControls.release();camera.position.set(0,1.65,0);visitorHud.group.visible=false;$('touch-controls').hidden=!touchDevice||!joined;});
 
 let elapsed = 0, poseTimer = 0;
 const hudButtons=new WeakMap();
@@ -352,8 +379,9 @@ renderer.setAnimationLoop(() => {
   const caption = activeReaction ? `${reactions.find(item => item.kind === myReaction.kind)?.label} · ${Math.ceil((myReaction.endsAt - now) / 1000)}s` : remaining ? 'Ready again in ' + remaining + 's' : 'Express yourself';
   if (caption !== reactionCaption) { reactionCaption = caption; $('reaction-status').textContent = caption; }
   for (const item of reactions) $('react-' + item.kind).disabled = !joined || remaining > 0;
-  showScene.update(); decorations.visible=!showScene.latest?.visuals?.environment;
+  showScene.update();showScene.rack.animate(dt); decorations.visible=!showScene.latest?.visuals?.environment;
   const listenerCamera = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  remoteControls.update(showScene.displayed,listenerCamera,renderer.xr.isPresenting);
   if(renderer.xr.isPresenting){
    if(visitorHud.pendingPlacement){let saved;try{saved=JSON.parse(localStorage.getItem('cardinal-show-vr-hud')||'null');}catch{}if(!visitorHud.restoreOnEnter||!visitorHud.restore(saved,listenerCamera))visitorHud.place(listenerCamera);visitorHud.pendingPlacement=false;visitorHud.restoreOnEnter=false;}
    scene.updateMatrixWorld(true);let hover=null;

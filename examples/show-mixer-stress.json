@@ -1,0 +1,198 @@
+{
+  "version": "2.4.1",
+  "modules": [
+    {
+      "id": 1,
+      "plugin": "Fundamental",
+      "model": "VCO",
+      "pos": [
+        0,
+        0
+      ],
+      "params": []
+    },
+    {
+      "id": 2,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowSpeaker",
+      "pos": [
+        10,
+        0
+      ],
+      "params": []
+    },
+    {
+      "id": 3,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowSpeaker",
+      "pos": [
+        20,
+        0
+      ],
+      "params": [
+        {
+          "id": 1,
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowLight",
+      "pos": [
+        30,
+        0
+      ],
+      "params": []
+    },
+    {
+      "id": 10,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowFigure",
+      "pos": [
+        0,
+        1
+      ],
+      "params": [
+        {
+          "id": 6,
+          "value": -1.5
+        },
+        {
+          "id": 8,
+          "value": -4
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowFountain",
+      "pos": [
+        12,
+        1
+      ],
+      "params": [
+        {
+          "id": 6,
+          "value": 1.5
+        },
+        {
+          "id": 8,
+          "value": -4
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowParticles",
+      "pos": [
+        24,
+        1
+      ],
+      "params": [
+        {
+          "id": 6,
+          "value": -3
+        },
+        {
+          "id": 8,
+          "value": -5
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowSculpture",
+      "pos": [
+        36,
+        1
+      ],
+      "params": [
+        {
+          "id": 6,
+          "value": 3
+        },
+        {
+          "id": 8,
+          "value": -5
+        }
+      ]
+    },
+    {
+      "id": 1000,
+      "plugin": "Cardinal3DShow",
+      "model": "ShowChatBoard",
+      "pos": [
+        48,
+        1
+      ],
+      "params": []
+    },
+    {
+      "id": 200,
+      "plugin": "MindMeldModular",
+      "model": "MixMaster",
+      "pos": [
+        0,
+        3
+      ],
+      "params": []
+    },
+    {
+      "id": 201,
+      "plugin": "MindMeldModular",
+      "model": "AuxExpander",
+      "pos": [
+        80,
+        3
+      ],
+      "params": []
+    }
+  ],
+  "cables": [
+    {
+      "id": 5,
+      "outputModuleId": 1,
+      "outputId": 0,
+      "inputModuleId": 2,
+      "inputId": 0,
+      "color": "#65e7ff"
+    },
+    {
+      "id": 6,
+      "outputModuleId": 1,
+      "outputId": 1,
+      "inputModuleId": 3,
+      "inputId": 0,
+      "color": "#ffd365"
+    },
+    {
+      "id": 7,
+      "outputModuleId": 1,
+      "outputId": 0,
+      "inputModuleId": 4,
+      "inputId": 0,
+      "color": "#bd83ff"
+    },
+    {
+      "id": 2000,
+      "outputModuleId": 1,
+      "outputId": 0,
+      "inputModuleId": 200,
+      "inputId": 0,
+      "color": "#65e7ff"
+    },
+    {
+      "id": 2001,
+      "outputModuleId": 1,
+      "outputId": 1,
+      "inputModuleId": 200,
+      "inputId": 1,
+      "color": "#ffd365"
+    }
+  ]
+}

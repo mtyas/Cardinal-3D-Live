@@ -15,6 +15,7 @@ static func icon(kind: String) -> Texture2D:
 		"racks": '<rect x="5" y="8" width="38" height="14" rx="2"/><rect x="5" y="27" width="38" height="14" rx="2"/><path d="M13 12v6m9-6v6m9-6v6M13 31v6m9-6v6m9-6v6"/>',
 		"environment": '<circle cx="36" cy="11" r="5"/><path d="M4 39L19 12l11 19 5-9 10 17z"/>',
 		"audio": '<path d="M5 23h5l5-15 6 33 7-28 6 19 5-9h5"/>',
+		"show": '<circle cx="24" cy="24" r="5"/><path d="M14 14a14 14 0 000 20m20-20a14 14 0 010 20M8 8a23 23 0 000 32m32-32a23 23 0 010 32"/>',
 		"modules": '<rect x="8" y="4" width="32" height="40" rx="3"/><circle cx="24" cy="17" r="7"/><path d="M24 17v-5M16 33h1m14 0h1"/>',
 		"open": '<path d="M4 14h16l4 5h19l-5 22H8zM8 14V7h15l4 5h12v7"/>',
 		"save": '<path d="M7 5h30l5 5v32H7zM15 5v13h18V5M15 42V27h20v15"/>',
@@ -24,30 +25,30 @@ static func icon(kind: String) -> Texture2D:
 		"close": '<path d="M12 12l24 24M12 36l24-24"/>'
 	}
 	var image := Image.new()
-	image.load_svg_from_string('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g fill="none" stroke="#62e4ca" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' + shapes.get(kind, shapes.modules) + '</g></svg>')
+	image.load_svg_from_string('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><g fill="none" stroke="#a4edcf" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' + shapes.get(kind, shapes.modules) + '</g></svg>')
 	return ImageTexture.create_from_image(image)
 
 static func box(color: String, border: String = "", margin: int = 10) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(color)
-	style.set_corner_radius_all(12)
+	style.set_corner_radius_all(8)
 	style.content_margin_left = margin
 	style.content_margin_right = margin
 	style.content_margin_top = 7
 	style.content_margin_bottom = 7
 	if not border.is_empty():
 		style.border_color = Color(border)
-		style.set_border_width_all(2)
+		style.set_border_width_all(1)
 	return style
 
 static func make() -> Theme:
 	var theme := Theme.new()
-	theme.default_font_size = 20
+	theme.default_font_size = 18
 	theme.default_font = preload("res://scripts/clear_text.gd").font()
 	for type in ["Button", "OptionButton", "MenuButton"]:
-		theme.set_stylebox("normal", type, box("203443", "365363", 16))
-		theme.set_stylebox("hover", type, box("304253", "5d8498"))
-		theme.set_stylebox("pressed", type, box("163d4a", "6dd9e6"))
+		theme.set_stylebox("normal", type, box("1d2a2e", "344347", 16))
+		theme.set_stylebox("hover", type, box("2b3b3e", "607774", 16))
+		theme.set_stylebox("pressed", type, box("30453e", "a4edcf", 16))
 		theme.set_stylebox("disabled", type, box("18222c"))
 		var focus := box("00000000", "78dfeb")
 		theme.set_stylebox("focus", type, focus)
@@ -55,20 +56,38 @@ static func make() -> Theme:
 		theme.set_color("font_hover_color", type, Color.WHITE)
 		theme.set_color("font_disabled_color", type, Color("617382"))
 	theme.set_color("font_color", "Label", Color("b6c6d2"))
-	theme.set_stylebox("panel", "PanelContainer", box("101923f2", "2a3947", 16))
+	theme.set_stylebox("panel", "PanelContainer", box("141e21f5", "344347", 18))
 	theme.set_stylebox("normal", "LineEdit", box("0e1720", "344353"))
 	theme.set_stylebox("focus", "LineEdit", box("12232d", "6dd9e6"))
 	theme.set_color("font_color", "LineEdit", Color("e3edf4"))
 	theme.set_color("font_placeholder_color", "LineEdit", Color("71889a"))
 	theme.set_stylebox("panel", "PopupMenu", box("17232e", "3d5365"))
+	theme.set_type_variation("LiveButton", "Button")
+	theme.set_stylebox("normal", "LiveButton", box("a52d3d", "ff8590", 16))
+	theme.set_stylebox("hover", "LiveButton", box("c13e50", "ffabb3", 16))
 	theme.set_type_variation("PrimaryButton", "Button")
-	theme.set_stylebox("normal", "PrimaryButton", box("26655f", "62e4ca", 16))
+	theme.set_stylebox("normal", "PrimaryButton", box("26655f", "a4edcf", 16))
 	theme.set_stylebox("hover", "PrimaryButton", box("307d72", "a5ffe4", 16))
 	theme.set_stylebox("background", "ProgressBar", box("203443", "", 0))
-	theme.set_stylebox("fill", "ProgressBar", box("62e4ca", "", 0))
+	theme.set_stylebox("fill", "ProgressBar", box("a4edcf", "", 0))
 	theme.set_constant("v_separation", "PopupMenu", 14)
 	theme.set_color("font_color", "PopupMenu", Color("e3edf4"))
 	theme.set_stylebox("hover", "PopupMenu", box("304253"))
 	for type in ["HBoxContainer", "VBoxContainer"]:
 		theme.set_constant("separation", type, 12)
 	return theme
+
+static func section(parent: VBoxContainer, title: String, expanded: bool = true) -> VBoxContainer:
+	var toggle := Button.new()
+	toggle.text = title + ("  −" if expanded else "  +")
+	toggle.toggle_mode = true
+	toggle.button_pressed = expanded
+	toggle.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	toggle.custom_minimum_size.y = 44
+	parent.add_child(toggle)
+	var content := VBoxContainer.new()
+	content.visible = expanded
+	content.add_theme_constant_override("separation", 12)
+	parent.add_child(content)
+	toggle.toggled.connect(func(open: bool): content.visible = open; toggle.text = title + ("  −" if open else "  +"))
+	return content

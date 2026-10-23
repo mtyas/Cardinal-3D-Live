@@ -5,6 +5,19 @@ import { Room } from './room.mjs';
 import { appearancePixels, blendAt } from './appearance.js';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import {scenePatch,applyScenePatch} from './scene-delta.js';
+
+test('new chat messages preserve the previous snapshot and reach delta clients immediately',()=>{
+ const room=new Room(),visitor=room.join();
+ for(let i=0;i<45;i++){
+  const before=room.snapshot(),count=before.chat.length,previousLast=before.chat.at(-1)?.text;
+  room.update(visitor.id,{type:'chat',text:'message '+i});
+  const after=room.snapshot();
+  assert.equal(before.chat.length,count);assert.equal(before.chat.at(-1)?.text,previousLast);
+  const reconstructed=applyScenePatch(before,scenePatch(before,after));
+  assert.equal(reconstructed.chat.at(-1).text,'message '+i);assert.ok(reconstructed.chat.length<=40);
+ }
+});
 test('reactions expire, have a server cooldown and cannot target other visitors', () => {
   let now = 10000;
   const room = new Room(() => now), a = room.join(), b = room.join();

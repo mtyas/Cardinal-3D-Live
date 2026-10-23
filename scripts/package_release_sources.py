@@ -15,6 +15,10 @@ args = parser.parse_args()
 require_clean(root)
 upstream=json.loads((root/'upstream.lock.json').read_text())
 deps=json.loads((root/'dependencies.lock.json').read_text())
+for pin in deps.get('webrtc_sources', []):
+    path=args.downloads/(pin['package']+'-'+pin['commit']+'.tar.gz')
+    if not path.is_file():raise RuntimeError('Missing WebRTC dependency sources. Run scripts/fetch_webrtc_sources.py --output '+str(args.downloads))
+    if hashlib.sha256(path.read_bytes()).hexdigest()!=pin['archive_sha256']:raise RuntimeError('WebRTC source archive hash mismatch: '+str(path))
 for directory,pin in [(args.cardinal,upstream['commit']),(args.bindings,deps['godot_bindings']),(args.decoder,deps['browser_decoder']['commit']),(args.opusscript,deps['server_codec']['commit'])]:
     actual=subprocess.check_output(['git','-c','safe.directory='+str(directory),'-C',str(directory),'rev-parse','HEAD'],text=True).strip()
     if actual!=pin: raise RuntimeError('Source pin mismatch: '+str(directory))
