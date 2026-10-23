@@ -22,6 +22,11 @@ export function audioBlocks(bytes) {
 }
 const finite = (v, low, high) => typeof v === 'number' && Number.isFinite(v) && v >= low && v <= high;
 export function validateShow(data) {
+  if(data?.session_title!==undefined&&(typeof data.session_title!=='string'||Array.from(data.session_title).length>80||/[\u0000-\u001f\u007f]/u.test(data.session_title)))return false;
+  const id=v=>typeof v==='string'&&/^(0|[1-9][0-9]{0,18})$/.test(v),port=v=>Number.isInteger(v)&&v>=0&&v<=65535;
+  if(data?.wiring!==undefined&&!id(data.wiring))return false;
+  if(data?.control_epoch!==undefined&&(typeof data.control_epoch!=='string'||data.control_epoch.length>96))return false;
+  if(data?.control_revision!==undefined&&(!Number.isSafeInteger(data.control_revision)||data.control_revision<0))return false;
   if (data?.type !== 'show' || !Number.isSafeInteger(data.frame) || data.frame < 0 || !finite(data.sample_rate, 8000, 192000)) return false;
   if (!Array.isArray(data.speakers) || data.speakers.length > 32 || !Array.isArray(data.lights) || data.lights.length > 32) return false;
   const ids = new Set();
@@ -58,12 +63,27 @@ export function validateShow(data) {
     const v=data.visuals, matrix=a=>Array.isArray(a)&&a.length===16&&a.every(n=>finite(n,-10000,10000)), hash=h=>h===''||/^[a-f0-9]{64}$/.test(h);
     if(!v||!Array.isArray(v.panels)||v.panels.length>128||!Array.isArray(v.cables)||v.cables.length>512||!hash(v.environment)||!finite(v.hour,0,24)||!Number.isInteger(v.place)||v.place<0||v.place>7)return false;
     if(v.cases!==undefined&&(!Array.isArray(v.cases)||v.cases.length>32||v.cases.some(c=>!matrix(c.matrix)||!Array.isArray(c.bounds)||c.bounds.length!==4||!c.bounds.every(n=>finite(n,-1000,1000)))))return false;
+    if(v.cases)for(const c of v.cases){
+     if(c.parts!==undefined){
+      if(!Array.isArray(c.parts)||c.parts.length>64)return false;
+      let instances=0;
+      for(const part of c.parts){
+       if(!part||!['box','cylinder'].includes(part.kind)||!Array.isArray(part.transforms)||part.transforms.length>512||(instances+=part.transforms.length)>1024||part.transforms.some(t=>!matrix(t))||typeof part.color!=='string'||!/^#[a-f0-9]{6}$/i.test(part.color)||!finite(part.metallic,0,1)||!finite(part.roughness,0,1))return false;
+       if(part.kind==='box'&&(!Array.isArray(part.size)||part.size.length!==3||!part.size.every(n=>finite(n,.00001,100))||!finite(part.bevel,0,1)))return false;
+       if(part.kind==='cylinder'&&(!finite(part.radius,.00001,10)||!finite(part.top,.00001,10)||!finite(part.height,.00001,10)))return false;
+      }
+     }
+    }
     for(const p of v.panels)if(typeof p.id!=='string'||p.id.length>32||!matrix(p.matrix)||!finite(p.width,.001,20)||!finite(p.height,.001,20)||!hash(p.texture)||!Array.isArray(p.controls)||p.controls.length>2048)return false;
     for(const p of v.panels)for(const c of p.controls){
       if(!c||typeof c!=='object'||typeof c.kind!=='string'||c.kind.length>24||!['string','number'].includes(typeof c.id))return false;
-      for(const key of ['x','y','width','height','normalized','brightness','emission_r','emission_g','emission_b','start_x','start_y','end_x','end_y','min_angle','max_angle'])if(c[key]!==undefined&&!finite(c[key],-100000,100000))return false;
+      if(c.momentary!==undefined&&typeof c.momentary!=='boolean')return false;
+      if(c.levels!==undefined&&(!Array.isArray(c.levels)||c.levels.length!==6||!c.levels.every(n=>finite(n,0,1))))return false;
+      for(const key of ['min','max'])if(c[key]!==undefined&&(typeof c[key]!=='number'||!Number.isFinite(c[key])))return false;
+      for(const key of ['x','y','width','height','normalized','brightness','emission_r','emission_g','emission_b','start_x','start_y','end_x','end_y','handle_width','handle_height','min_angle','max_angle'])if(c[key]!==undefined&&!finite(c[key],-100000,100000))return false;
     }
-    for(const c of v.cables)if(![c.a,c.b].every(a=>Array.isArray(a)&&a.length===3&&a.every(n=>finite(n,-1000,1000)))||typeof c.color!=='string'||c.color.length>32)return false;
+    for(const c of v.cables)for(const key of ['normal_a','normal_b'])if(c[key]!==undefined&&(!Array.isArray(c[key])||c[key].length!==3||!c[key].every(n=>finite(n,-1.01,1.01))))return false;
+    for(const c of v.cables)if((['id','input_module','input_port','output_module','output_port'].some(key=>c[key]!==undefined)&&(!id(c.id)||!id(c.input_module)||!id(c.output_module)||!port(c.input_port)||!port(c.output_port)))||![c.a,c.b].every(a=>Array.isArray(a)&&a.length===3&&a.every(n=>finite(n,-1000,1000)))||typeof c.color!=='string'||c.color.length>32)return false;
   }
   return true;
 }

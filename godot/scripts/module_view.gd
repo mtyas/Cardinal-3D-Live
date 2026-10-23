@@ -9,6 +9,7 @@ var face: MeshInstance3D
 var texture: ImageTexture
 var knobs: Dictionary = {}
 var lights: Dictionary = {}
+var meters: Dictionary = {}
 var switches: Dictionary = {}
 var screens: Array = []
 var control_nodes: Dictionary = {}
@@ -72,6 +73,10 @@ func setup(data: Dictionary) -> void:
 		display.setup(region, Vector2(float(data["width"]), float(data["height"])))
 		screens.append(display)
 	for control: Dictionary in data.get("controls", []):
+		if control.kind=="meter":
+			var meter=preload("res://scripts/meter_view.gd").new();add_child(meter);meter.setup(control)
+			meters[str(control.id)]=meter
+			continue
 		var at := Vector3(float(control["x"]) * SCALE, -float(control["y"]) * SCALE, 0.014)
 		var radius := maxf(float(control["width"]) * SCALE / 2, 0.005)
 		var kind := str(control["kind"])
@@ -158,6 +163,7 @@ func update_state(data: Dictionary) -> void:
 	position.y = -float(data["y"]) * SCALE
 	for control: Dictionary in data.get("controls", []):
 		var id := str(control["id"])
+		if control.kind=="meter" and meters.has(id): meters[id].update_values(control);continue
 		var key := control_key(control)
 		if control_nodes.has(key): control_nodes[key].visible = control.get("visible", true)
 		if control["kind"] in ["knob", "slider"] and knobs.has(id):

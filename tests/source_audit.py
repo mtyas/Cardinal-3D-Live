@@ -7,6 +7,7 @@ import sys
 import argparse
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"scripts"))
 from host_audio_cursor import patch_host_audio
+from mixer_meter_overlay import patch_mixer_meter
 from source_snapshot import verify_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,8 +24,14 @@ if (source / '.source-snapshot.json').is_file() and not (source / '.git').exists
     sys.exit(0)
 assert git('rev-parse', 'HEAD').strip() == pin['commit']
 changed = set(git('diff', 'HEAD', '--name-only').splitlines())
-allowed = {'src/CardinalUI.cpp', 'src/override/ModuleWidget.cpp', 'src/override/Window.cpp', 'src/Makefile.cardinal.mk', 'plugins/Makefile', 'dpf', 'src/Rack', 'plugins/Cardinal/src/HostAudio.cpp'}
+allowed = {'src/CardinalUI.cpp', 'src/override/ModuleWidget.cpp', 'src/override/Window.cpp', 'src/Makefile.cardinal.mk', 'plugins/Makefile', 'dpf', 'src/Rack', 'plugins/Cardinal/src/HostAudio.cpp', 'plugins/MindMeldModular'}
 assert changed <= allowed, f'Unexpected upstream changes: {changed-allowed}'
+mixer = source/'plugins/MindMeldModular'
+mixer_changed = set(subprocess.check_output(['git','-C',str(mixer),'diff','HEAD','--name-only'],text=True).splitlines())
+assert mixer_changed <= {'src/comp/VuMeters.hpp'}, 'Unexpected MindMeld DSP/source changes'
+meter_original = subprocess.check_output(['git','-C',str(mixer),'show','HEAD:src/comp/VuMeters.hpp'],text=True)
+assert (mixer/'src/comp/VuMeters.hpp').read_text() == patch_mixer_meter(meter_original), 'Unexpected mixer UI overlay'
+
 audio_original=git('show','HEAD:plugins/Cardinal/src/HostAudio.cpp')
 assert (source/'plugins/Cardinal/src/HostAudio.cpp').read_text()==patch_host_audio(audio_original),'Unexpected Host Audio edit beyond the input cursor fix'
 

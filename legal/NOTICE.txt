@@ -37,3 +37,7 @@ source archive and notices. GitHub's automatic source ZIP alone omits the
 recursive Cardinal sources and is not the complete source package.
 
 Show development builds include Steinberg ASIO SDK 2.3.4 under its GPLv3 option. See ASIO-SDK-2.3.4/LICENSE.txt and PROVENANCE.md.
+
+0.6 WebRTC server: werift (MIT) and its unmodified npm dependencies.
+See WEBRTC-DEPENDENCIES.txt and werift-LICENSE.txt for notices and preferred
+source references, including the MPL-2.0 Mediabunny dependency.

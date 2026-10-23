@@ -420,6 +420,8 @@ func _make_ui() -> void:
 	collision.shape = box
 	body.add_child(collision)
 	host.header_panel.hide()
+	# Preserve the larger immersive text size while desktop uses the compact theme.
+	host.header_panel.get_parent().theme.default_font_size = 20
 	host.status_label.hide()
 	for node in host.header_panel.get_parent().get_children():
 		if node is Label: node.hide()
@@ -439,7 +441,7 @@ func _make_ui() -> void:
 	heading.add_child(title)
 	heading.add_child(preload("res://scripts/ui_theme.gd").close_button(_close_ui))
 	var subtitle := Label.new()
-	subtitle.text = "Your instruments. Your space."
+	subtitle.text = "Play · Share · Make yourself at home."
 	column.add_child(subtitle)
 	_load_interaction_settings()
 	wrist_label = Label.new()
@@ -460,8 +462,8 @@ func _make_ui() -> void:
 	for entry in [
 		["New rack…\nStart a fresh patch", _request_new_rack, "racks"],
 		["Rack management\nArrange your cases", func(): _open_settings("racks"), "racks"],
-		["Environment & graphics\nChoose a place & light", func(): _open_settings("environment"), "environment"],
-		["Show & broadcast\nSpeakers, lights & visitors", func(): _open_settings("show"), "audio"],
+		["Your space\nScenery, light & graphics", func(): _open_settings("environment"), "environment"],
+		["Live", func(): _open_settings("show"), "show"],
 		["Audio & MIDI devices\nConnect your instruments", func(): _open_settings("audio"), "audio"],
 		["Browse modules (A)\nBuild your instrument", _toggle_browser, "modules"],
 		["Open patch…", func(): host._patch_action(0), "open"],
@@ -480,6 +482,7 @@ func _make_ui() -> void:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.add_theme_font_size_override("font_size", 19)
 		button.pressed.connect(entry[1])
+		if entry[2] == "show": host.show_stage.register_live_button(button)
 		actions.add_child(button)
 	main_menu.hide()
 	new_rack_dialog = ConfirmationDialog.new()

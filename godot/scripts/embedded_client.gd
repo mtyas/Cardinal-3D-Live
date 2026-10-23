@@ -1,6 +1,7 @@
 extends "res://scripts/bridge_client.gd"
 ## Experimental in-process backend. The normal bridge remains the default.
 signal stopping
+signal local_interaction(operation: String, data: Dictionary)
 var native
 var audio_player: AudioStreamPlayer
 var audio_playback
@@ -8,6 +9,11 @@ var commands: Array[Dictionary] = []
 var panel_requests: Dictionary = {}
 var panels: Dictionary = {}
 var local_snapshot := {}
+var descriptor_index := {}
+var control_index := {}
+var pending_visual_values := {}
+var supports_live_values := false
+var live_update_count := 0
 var native_surface_count := 0
 var recovery_path := ""
 var closed := false
@@ -77,6 +83,7 @@ func _boot() -> void:
 
 func send_command(operation: String, data: Dictionary = {}) -> int:
 	if not connected: return -1
+	local_interaction.emit(operation, data)
 	var command := data.duplicate(true)
 	command["op"] = operation
 	command["request"] = next_id
@@ -88,13 +95,14 @@ func send_command(operation: String, data: Dictionary = {}) -> int:
 
 func _process(delta: float) -> void:
 	if not connected: return
-	var count := mini(commands.size(), 8)
+	var count := mini(commands.size(), 7 if supports_live_values else 8)
 	for index in range(count):
 		if commands[index].get("op") == "preview":
 			count = index + 1
 			break
 	var batch := commands.slice(0, count)
-	# One native scene step and snapshot, including on frames without commands.
+	if supports_live_values: batch.append({"op":"poll_live","request":0,"generation":generation})
+	# Keep widget stepping and live controls at render rate; descriptions at 5 Hz.
 	var state: String = native.messages_json(JSON.stringify(batch))
 	if not state.is_empty():
 		for _index in range(count): commands.pop_front()
@@ -117,20 +125,55 @@ func _ingest(payload: String) -> void:
 	if not messages is Array: return
 	for message: Dictionary in messages:
 		if message.get("type") == "snapshot":
+			if generation != str(message.generation):pending_visual_values.clear()
 			generation = str(message.generation)
 			snapshot_count += 1
 			local_snapshot = message
+			supports_live_values=bool(message.get("supports_live_values",false))
+			descriptor_index.clear();control_index.clear()
+			for descriptor: Dictionary in message.modules:
+				var module_id := str(descriptor.id);descriptor_index[module_id]=descriptor
+				for control: Dictionary in descriptor.get("controls",[]):control_index[module_id+"/"+str(control.kind)+"/"+str(control.id)]=control
 			var present := {}
 			for descriptor: Dictionary in message.modules: _request_panel(descriptor)
 			for descriptor: Dictionary in message.modules: present[str(descriptor.id)] = true
 			for id: String in panels.keys():
 				if not id.begins_with("preview/") and not present.has(id): panels.erase(id)
+		elif message.get("type")=="live_values" and str(message.get("generation",""))==generation:
+			live_update_count+=1
+			for key in ["gesture_active","overlay","overlay_mode","audio_cpu_average"]:local_snapshot[key]=message.get(key)
+			var changed := []
+			for group: Dictionary in message.get("modules",[]):
+				var module_id := str(group.id)
+				if not descriptor_index.has(module_id):continue
+				for update: Dictionary in group.controls:
+					var key := module_id+"/"+str(update.kind)+"/"+str(update.id)
+					if not control_index.has(key):continue
+					control_index[key].merge(update,true)
+					pending_visual_values[key]={"module":module_id,"values":update}
+				changed.append(descriptor_index[module_id])
+			message["descriptors"]=changed
+		elif message.get("type") == "parameter_value" and str(message.get("generation", "")) == generation:
+			# Keep the shared descriptor references current before the next scene poll.
+			# Show capture and module views refer to this same snapshot dictionary.
+			for descriptor: Dictionary in local_snapshot.get("modules", []):
+				if str(descriptor.id) != str(message.get("module", "")): continue
+				for control: Dictionary in descriptor.get("controls", []):
+					if control.get("kind") in ["knob", "slider", "switch"] and control.get("id") == message.get("param"):
+						control["normalized"] = message.value
+						control["value"] = message.native_value
+						control["display"] = message.display
+						break
+				break
 		elif message.get("type") == "preview":
 			panels.erase(str(message.descriptor.id))
 			_request_panel(message.descriptor)
 		elif message.get("type") == "ack" and not message.get("ok", false):
 			push_error("Embedded command: " + str(message.get("error", "Unknown error")))
 		message_received.emit(message)
+
+func take_visual_values() -> Array:
+	var values: Array=pending_visual_values.values();pending_visual_values.clear();return values
 
 func _request_panel(descriptor: Dictionary) -> void:
 	var id := str(descriptor.id)

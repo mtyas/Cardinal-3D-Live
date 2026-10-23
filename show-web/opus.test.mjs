@@ -29,3 +29,14 @@ test('44.1kHz input resamples to 48kHz; ceiling, silence and discontinuity are h
  const decoder=new OpusScript(48000,1,OpusScript.Application.AUDIO);assert.ok(decoder.decode(out[0].packet.subarray(36)).every(v=>v===0));decoder.delete();
  const restarted=e.encode(packet(96000),96);assert.equal(Number(restarted[0].packet.readBigUInt64LE(16)),96000);e.retain([]);assert.equal(e.sources.size,0);e.reset();
 });
+
+test('only requested audio qualities are encoded, with continuous source clocks across quality changes',()=>{
+ const e=new ShowEncoder();
+ try{
+  const first=e.encode(packet(0),128,[64]);assert.deepEqual(first.map(p=>p.kbps),[64]);
+  assert.deepEqual([...e.sources.get('1').encoders.keys()],[64]);
+  const next=e.encode(packet(1024),128,[96,128]);assert.deepEqual(next.map(p=>p.kbps),[96,128]);
+  assert.ok(next.every(p=>Number(p.packet.readBigUInt64LE(16))===960));
+  assert.deepEqual([...e.sources.get('1').encoders.keys()],[96,128]);
+ }finally{e.reset();}
+});

@@ -32,7 +32,9 @@ def main():
     parser.add_argument('--graphics', action='store_true')
     parser.add_argument('--project', type=Path, default=ROOT / 'godot')
     parser.add_argument('--integration', action='store_true', help='Keep explicit native/relay environment for prepared integration tests')
+    parser.add_argument('--timeout', type=int, default=60, help='Maximum test seconds (1–300); extend explicitly for sustained streaming checks')
     args = parser.parse_args()
+    if not 1 <= args.timeout <= 300: parser.error('--timeout must be between 1 and 300 seconds')
     script = (args.project / args.script[6:] if args.script.startswith('res://') else Path(args.script)).resolve()
     if not script.is_file(): parser.error('Test script does not exist: ' + str(script))
     if script.stem in ('show_publish', 'frontend_live_stream') and not args.integration:
@@ -56,6 +58,6 @@ def main():
                 '--log-file', scratch / 'godot.log']
         run(base + ['--headless', '--editor', '--quit-after', '60', '--frame-delay', '100'], env)
         display = ['--rendering-method', 'gl_compatibility', '--resolution', '1440x900'] if graphics else ['--headless']
-        run(base + display + ['--script', script], env, marker=True)
+        run(base + display + ['--script', script], env, timeout=args.timeout, marker=True)
 
 if __name__ == '__main__': main()

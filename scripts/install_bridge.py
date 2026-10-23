@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 from host_audio_cursor import patch_host_audio
+from mixer_meter_overlay import patch_mixer_meter
 
 ROOT = Path(__file__).resolve().parents[1]
 CARDINAL = ROOT / "vendor/Cardinal"
@@ -35,8 +36,10 @@ def main():
     replace(dpf / "DistrhoPluginJACK.cpp", '   #ifndef STATIC_BUILD\n    // find plugin bundle', '   #if !defined(STATIC_BUILD) || defined(DISTRHO_OS_WINDOWS)\n    // find plugin bundle')
     target = CARDINAL / "src/cardinal3d"
     target.mkdir(exist_ok=True)
-    for filename in ("Transport.hpp", "Cardinal3DBridge.hpp", "SvgPalette.hpp"):
+    for filename in ("Transport.hpp", "Cardinal3DBridge.hpp", "SvgPalette.hpp", "MeterTelemetry.hpp"):
         shutil.copy2(ROOT / "bridge" / filename, target / filename)
+    meter = CARDINAL / 'plugins/MindMeldModular/src/comp/VuMeters.hpp'
+    if meter.is_file(): meter.write_text(patch_mixer_meter(meter.read_text()))
     shutil.copy2(ROOT / "bridge/plugins-3d.cpp", CARDINAL / "plugins/plugins-3d.cpp")
     ui = CARDINAL / "src/CardinalUI.cpp"
     # Preserve subclass destructors during standalone extraction. Only registered

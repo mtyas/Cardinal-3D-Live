@@ -5,6 +5,7 @@ var cursor := 0
 var environment_id := 0
 var environment_asset := ""
 var generation := ""
+var case_cache := {}
 func matrix(t: Transform3D) -> Array:
  var values := [t.basis.x.x,t.basis.x.y,t.basis.x.z,0,t.basis.y.x,t.basis.y.y,t.basis.y.z,0,t.basis.z.x,t.basis.z.y,t.basis.z.z,0,t.origin.x,t.origin.y,t.origin.z,1]
  return values.map(func(v): return snappedf(float(v),0.0001))
@@ -17,6 +18,28 @@ func asset(bytes: PackedByteArray, media: String, peer) -> String:
  var id := context.finish().hex_encode()
  peer.queue_asset(JSON.stringify({"type":"asset","id":id,"media":media,"data":Marshalls.raw_to_base64(bytes)}))
  return id
+func case_parts(cabinet) -> Array:
+ var id: int = cabinet.get_instance_id()
+ var signature: String = cabinet.layout_signature
+ if case_cache.has(id) and case_cache[id].signature==signature: return case_cache[id].parts
+ var groups := {}
+ for node in cabinet.get_children():
+  if not node is MeshInstance3D or not node.has_meta("show_shape"): continue
+  var shape: Dictionary = node.get_meta("show_shape").duplicate(true)
+  # Omit subpixel threaded holes; retain the shell, rails, cheeks and fasteners.
+  if shape.kind=="cylinder" and shape.radius<0.002: continue
+  var mat: Material = node.material_override
+  shape["color"]="#63351b" if mat is ShaderMaterial else "#"+mat.albedo_color.to_html(false)
+  shape["metallic"]=mat.metallic if mat is StandardMaterial3D else 0.0
+  shape["roughness"]=mat.roughness if mat is StandardMaterial3D else 0.45
+  var key := JSON.stringify(shape)
+  if not groups.has(key):
+   shape["transforms"]=[]
+   groups[key]=shape
+  groups[key].transforms.append(matrix(node.transform))
+ var parts: Array = groups.values()
+ case_cache[id]={"signature":signature,"parts":parts}
+ return parts
 func capture(host, peer) -> Dictionary:
  if generation != str(host.generation):
   generation = str(host.generation)
@@ -45,17 +68,21 @@ func capture(host, peer) -> Dictionary:
   if not host.modules.has(a) or not host.modules.has(b): continue
   var start: Vector3 = host.modules[a].port_position(int(cable.output_port),"output")+offset
   var end: Vector3 = host.modules[b].port_position(int(cable.input_port),"input")+offset
-  cables.append({"a":[start.x,start.y,start.z],"b":[end.x,end.y,end.z],"color":str(cable.get("color","#65e7ff"))})
+  cables.append({"id":str(cable.id),"input_module":b,"input_port":int(cable.input_port),"output_module":a,"output_port":int(cable.output_port),"a":[start.x,start.y,start.z],"b":[end.x,end.y,end.z],"color":str(cable.get("color","#65e7ff")),"normal_a":[host.modules[a].global_basis.z.x,host.modules[a].global_basis.z.y,host.modules[a].global_basis.z.z],"normal_b":[host.modules[b].global_basis.z.x,host.modules[b].global_basis.z.y,host.modules[b].global_basis.z.z]})
  var cases := []
+ var active_cases := {}
  var cabinets := [host.rack_case]
- if host.xr_session != null and host.xr_session.rack_layout != null:
+ if host.rack_layout != null:
   cabinets=[]
-  for entry in host.xr_session.rack_layout.cases: cabinets.append(entry["case"])
+  for entry in host.rack_layout.cases: cabinets.append(entry["case"])
  for cabinet in cabinets:
   if cabinet.bounds.size == Vector2.ZERO: continue
+  active_cases[cabinet.get_instance_id()]=true
   var t: Transform3D = cabinet.global_transform;t.origin += offset
   var rect: Rect2 = cabinet.bounds
-  cases.append({"matrix":matrix(t),"bounds":[rect.position.x*.002,-rect.position.y*.002,rect.size.x*.002,rect.size.y*.002]})
+  cases.append({"matrix":matrix(t),"bounds":[rect.position.x*.002,-rect.position.y*.002,rect.size.x*.002,rect.size.y*.002],"parts":case_parts(cabinet)})
+ for id in case_cache.keys():
+  if not active_cases.has(id): case_cache.erase(id)
  var env = host.immersive_environment
  if env != null and env.scenery != null and environment_id != env.scenery.get_instance_id():
   environment_id = env.scenery.get_instance_id()
@@ -69,12 +96,15 @@ func capture(host, peer) -> Dictionary:
     mesh=node.multimesh.mesh
     for i in range(mini(node.multimesh.instance_count,4096)): transforms.append(matrix(shared_transform(node.global_transform*node.multimesh.get_instance_transform(i),offset)))
    var shape := {}
-   if mesh is BoxMesh: shape={"kind":"box","size":[mesh.size.x,mesh.size.y,mesh.size.z]}
+   if node.has_meta("show_shape"):
+    var native_shape: Dictionary=node.get_meta("show_shape")
+    shape={"kind":"box","size":native_shape.size} if native_shape.kind=="box" else {"kind":"cylinder","top":native_shape.top,"bottom":native_shape.radius,"height":native_shape.height}
+   elif mesh is BoxMesh: shape={"kind":"box","size":[mesh.size.x,mesh.size.y,mesh.size.z]}
    elif mesh is CylinderMesh: shape={"kind":"cylinder","top":mesh.top_radius,"bottom":mesh.bottom_radius,"height":mesh.height}
    elif mesh is SphereMesh: shape={"kind":"sphere","radius":mesh.radius,"height":mesh.height}
    if not shape.is_empty():
     shape["transforms"]=transforms
-    shape["color"]="#"+node.material_override.albedo_color.to_html(false)
+    shape["color"]="#"+node.material_override.albedo_color.to_html(false) if node.material_override is StandardMaterial3D else "#63351b"
     groups.append(shape)
   environment_asset=asset(JSON.stringify(groups).to_utf8_buffer(),"application/json",peer)
  return {"cases":cases,"panels":panels,"cables":cables,"environment":environment_asset,"hour":env.hour if env != null else 14.0,"place":env.place if env != null else 7}

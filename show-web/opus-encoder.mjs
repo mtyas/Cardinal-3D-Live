@@ -5,8 +5,9 @@ export class ShowEncoder {
  sources=new Map();
  reset(){for(const s of this.sources.values())for(const e of s.encoders.values())e.delete();this.sources.clear();}
  retain(ids){for(const [id,s] of this.sources)if(!ids.includes(id)){for(const e of s.encoders.values())e.delete();this.sources.delete(id);}}
- encode(bytes,cap=128){
+ encode(bytes,cap=128,requested=[64,96,128]){
   const result=[];
+  const qualities=[64,96,128].filter(q=>q<=cap&&requested.includes(q));
   let offset=8;
   for(const b of audioBlocks(bytes)){
    offset+=24;
@@ -21,15 +22,15 @@ export class ShowEncoder {
     const pcm=Buffer.alloc(1920);
     for(let i=0;i<960;i++){const p=s.next+i*step-s.base,j=Math.floor(p),t=p-j;const v=s.samples[j]*(1-t)+s.samples[j+1]*t;pcm.writeInt16LE(Math.round(Math.max(-1,Math.min(1,v))*32767),i*2);}
     const frame=Math.round(s.next*48000/b.rate);
-    for(const kbps of [64,96,128].filter(q=>q<=cap)){
-     let e=s.encoders.get(kbps);if(!e){e=new OpusScript(48000,1,OpusScript.Application.AUDIO);e.encoderCTL(4002,kbps*1000);e.encoderCTL(4010,5);s.encoders.set(kbps,e);}
+    for(const kbps of qualities){
+     let e=s.encoders.get(kbps);if(!e){e=new OpusScript(48000,1,OpusScript.Application.AUDIO);e.encoderCTL(4002,kbps*1000);e.encoderCTL(4010,5);e.encoderCTL(4012,1);e.encoderCTL(4014,5);s.encoders.set(kbps,e);}
      const compressed=e.encode(pcm,960),packet=Buffer.alloc(36+compressed.length);
      packet.write('C3DO');packet.writeUInt32LE(1,4);packet.writeBigUInt64LE(BigInt(b.id),8);packet.writeBigUInt64LE(BigInt(frame),16);packet.writeUInt32LE(48000,24);packet.writeUInt32LE(compressed.length,28);packet.writeUInt32LE(kbps,32);compressed.copy(packet,36);result.push({kbps,packet});
     }
     s.next+=960*step;
    }
    const consume=Math.max(0,Math.floor(s.next)-s.base);s.samples=s.samples.slice(consume);s.base+=consume;
-   for(const [quality,e]of s.encoders)if(quality>cap){e.delete();s.encoders.delete(quality);}
+   for(const [quality,e]of s.encoders)if(!qualities.includes(quality)){e.delete();s.encoders.delete(quality);}
   }
   return result;
  }

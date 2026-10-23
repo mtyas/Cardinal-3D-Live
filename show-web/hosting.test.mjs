@@ -5,6 +5,12 @@ const config={proxyAddress:'100.64.0.10',publicOrigin:'https://live.example.org'
 const visitor={path:'/room',origin:config.publicOrigin,address:'100.64.0.10',host:null,invite:'visitor-secret'};
 test('public visitor must present the invitation and approved origin',()=>{assert.equal(authorizeUpgrade(visitor,config),true);assert.equal(authorizeUpgrade({...visitor,invite:null},config),false);assert.equal(authorizeUpgrade({...visitor,address:'192.168.31.40'},config),false);assert.equal(authorizeUpgrade({...visitor,origin:'https://evil.test'},config),false);});
 test('remote native publishers and remote host impersonation are blocked even with a host key',()=>{const native={path:'/performer',origin:undefined,address:'127.0.0.1',host:'performer-secret',invite:null};assert.equal(authorizeUpgrade(native,config),true);assert.equal(authorizeUpgrade({...native,address:'100.64.0.10'},config),false);assert.equal(authorizeUpgrade({...visitor,host:'performer-secret'},config),false);assert.equal(authorizeUpgrade({...native,origin:config.publicOrigin},config),false);});
+
+test('dedicated native audio is loopback-only, requires the host key, and rejects browser origins',()=>{
+ const audio={path:'/performer-audio',origin:undefined,address:'127.0.0.1',host:'performer-secret',invite:null};
+ assert.equal(authorizeUpgrade(audio,config),true);assert.equal(authorizeUpgrade({...audio,host:'visitor-secret'},config),false);
+ assert.equal(authorizeUpgrade({...audio,address:config.proxyAddress},config),false);assert.equal(authorizeUpgrade({...audio,origin:config.publicOrigin},config),false);
+});
 test('HTTPS origin is explicit and cannot carry credentials or arbitrary paths',()=>{assert.equal(publicOrigin('https://live.example.org'),'https://live.example.org');assert.throws(()=>publicOrigin('http://live.example.org'));assert.throws(()=>publicOrigin('https://user:secret@live.example.org'));assert.throws(()=>publicOrigin('https://live.example.org/path'));});
 
 test('public HTTP is redirected to the configured HTTPS origin without affecting localhost',()=>{

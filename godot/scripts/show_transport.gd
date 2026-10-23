@@ -16,6 +16,9 @@ var cached_room := {}
 var commands := []
 var assets := []
 var sent_assets := {}
+var control_events := []
+func take_control_events() -> Array:
+ mutex.lock();var events=control_events;control_events=[];mutex.unlock();return events
 func queue_asset(text: String) -> void:
  var data: Variant = JSON.parse_string(text)
  mutex.lock()
@@ -42,10 +45,12 @@ func room_snapshot() -> Dictionary:
   cached_room = data if data is Dictionary else {}
   consumed_revision = revision
  return cached_room
-func send_command_text(text: String) -> void:
+func send_command_text(text: String) -> bool:
  mutex.lock()
- if commands.size()<16: commands.append(text)
+ var accepted := commands.size()<64
+ if accepted: commands.append(text)
  mutex.unlock()
+ return accepted
 func close() -> void:
  mutex.lock();quitting=true;mutex.unlock()
  if thread.is_started():thread.wait_to_finish()
@@ -55,14 +60,25 @@ func _run() -> void:
  socket.outbound_buffer_size=1048576
  socket.inbound_buffer_size=1048576
  socket.connect_to_url(url)
+ var audio_socket := WebSocketPeer.new()
+ audio_socket.outbound_buffer_size=1048576
+ audio_socket.connect_to_url(url.replace("/performer?","/performer-audio?"))
  while true:
   mutex.lock();var done=quitting;var update=scene;scene="";mutex.unlock()
   if done:break
-  socket.poll()
+  socket.poll();audio_socket.poll()
+  if audio_socket.get_ready_state()==WebSocketPeer.STATE_CLOSED:break
   while socket.get_available_packet_count()>0:
    var packet := socket.get_packet()
    if socket.was_string_packet():
     var text := packet.get_string_from_utf8()
+    if text.length()<=4096:
+     var event: Variant=JSON.parse_string(text) if text.begins_with('{"type":"control_') else null
+     if event is Dictionary:
+      mutex.lock()
+      if control_events.size()<32:control_events.append(event)
+      else:quitting=true
+      mutex.unlock()
     if text.begins_with('{"type":"room"'):
      mutex.lock();room_state=text;room_revision+=1;mutex.unlock()
   var current=socket.get_ready_state()
@@ -72,11 +88,14 @@ func _run() -> void:
   if current==WebSocketPeer.STATE_OPEN and socket.get_current_outbound_buffered_amount()<65536:
    mutex.lock();var command=commands.pop_front() if not commands.is_empty() else "";mutex.unlock()
    if not command.is_empty():socket.send_text(command)
-  var audio:PackedByteArray=native.show_audio_network()
-  if not audio.is_empty() and current==WebSocketPeer.STATE_OPEN and socket.get_current_outbound_buffered_amount()<65536:socket.send(audio)
+  # Audio has its own local socket. Do not drain a native ring while its
+  # sender is blocked: retain samples instead of silently throwing them away.
+  if audio_socket.get_ready_state()==WebSocketPeer.STATE_OPEN and audio_socket.get_current_outbound_buffered_amount()<65536:
+   var audio:PackedByteArray=native.show_audio_network()
+   if not audio.is_empty():audio_socket.send(audio)
   if current==WebSocketPeer.STATE_OPEN and socket.get_current_outbound_buffered_amount()<16384:
    mutex.lock();var upload = assets.pop_front() if not assets.is_empty() else "";mutex.unlock()
    if not upload.is_empty():socket.send_text(upload)
   OS.delay_usec(8000)
- socket.close()
+ socket.close();audio_socket.close()
  mutex.lock();state=WebSocketPeer.STATE_CLOSED;mutex.unlock()

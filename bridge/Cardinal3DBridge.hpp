@@ -8,6 +8,7 @@
 #include <app/RackWidget.hpp>
 #include <app/SvgKnob.hpp>
 #include "SvgPalette.hpp"
+#include "MeterTelemetry.hpp"
 #include <map>
 #include <app/SvgSlider.hpp>
 #include <app/SvgSwitch.hpp>
@@ -77,6 +78,9 @@ class Bridge {
     uint64_t generation = 1;
     std::string topology;
     double lastSeen = 0, lastSnapshot = 0, lastSurface = 0;
+    double lastLocalDescription = 0;
+    uint64_t describedGeneration = 0;
+    std::map<std::string, std::string> liveControlCache;
     size_t surfaceIndex = 0;
     std::string previousOverlayMode = "none";
     math::Vec mouse;
@@ -84,6 +88,83 @@ class Bridge {
     int pressedButton = -1;
     bool rackPointer = false;
     std::string activeModule, movingModule;
+    struct ParameterEdit {
+        std::string moduleId;
+        engine::Module* identity;
+        int parameter;
+        float initial;
+        bool momentary;
+    };
+    std::map<std::string, ParameterEdit> parameterEdits;
+    void finishParameter(const std::string& gesture) {
+        auto it = parameterEdits.find(gesture);
+        if (it == parameterEdits.end()) return;
+        const auto edit = it->second;
+        parameterEdits.erase(it);
+        auto* mw = module(edit.moduleId);
+        if (!mw || mw->module != edit.identity) return;
+        auto* q = mw->module->getParamQuantity(edit.parameter);
+        if (!q) return;
+        if (edit.momentary) { q->setValue(q->getMinValue()); return; }
+        if (q->getValue() == edit.initial) return;
+        auto* change = new history::ParamChange;
+        change->moduleId = mw->module->id; change->paramId = edit.parameter;
+        change->oldValue = edit.initial; change->newValue = q->getValue();
+        APP->history->push(change);
+    }
+    void finishParameters() {
+        while (!parameterEdits.empty()) finishParameter(parameterEdits.begin()->first);
+    }
+    void parameterEdit(json_t* cmd) {
+        // Only the embedded owner-thread adapter may use this semantic path.
+        // Authorization/leases belong to the host, not this native primitive.
+        if (!localMessages) throw std::runtime_error("Parameter edits require the embedded host");
+        const std::string gesture = text(cmd, "gesture"), id = text(cmd, "module"), phase = text(cmd, "phase");
+        if (gesture.empty() || gesture.size() > 64) throw std::runtime_error("Invalid gesture");
+        auto* field = json_object_get(cmd, "param");
+        const double index = number(cmd, "param", -1);
+        if (!json_is_number(field) || !std::isfinite(index) || index < 0 || index > 65535 || index != std::floor(index))
+            throw std::runtime_error("Invalid parameter ID");
+        auto* mw = module(id);
+        if (!mw || !mw->module || index >= mw->module->params.size()) throw std::runtime_error("Parameter does not exist");
+        const int param = int(index);
+        auto* q = mw->module->getParamQuantity(param);
+        auto* widget = mw->getParam(param);
+        // Custom widgets can carry additional semantics. Start with recognized
+        // knobs, sliders and switches; arbitrary surfaces stay on native input.
+        if (!q || !widget || (!dynamic_cast<app::Knob*>(widget) && !dynamic_cast<app::SvgSlider*>(widget) && !dynamic_cast<app::Switch*>(widget)) ||
+            !std::isfinite(q->minValue) || !std::isfinite(q->maxValue) || q->maxValue <= q->minValue)
+            throw std::runtime_error("Parameter does not support semantic editing");
+        auto it = parameterEdits.find(gesture);
+        if (phase == "begin") {
+            if (pressedButton >= 0) throw std::runtime_error("Local gesture is active");
+            if (it != parameterEdits.end() || parameterEdits.size() >= 16) throw std::runtime_error("Gesture unavailable");
+            for (const auto& entry : parameterEdits)
+                if (entry.second.moduleId == id && entry.second.parameter == param) throw std::runtime_error("Parameter is grabbed");
+            parameterEdits.emplace(gesture, ParameterEdit{id, mw->module, param, q->getValue(), dynamic_cast<app::Switch*>(widget) && dynamic_cast<app::Switch*>(widget)->momentary});
+        } else {
+            if (it == parameterEdits.end() || it->second.moduleId != id || it->second.parameter != param || it->second.identity != mw->module)
+                throw std::runtime_error("Gesture was released");
+            if (phase == "update") {
+                const double value = number(cmd, "value", -1);
+                if (!json_is_number(json_object_get(cmd, "value")) || !std::isfinite(value) || value < 0 || value > 1)
+                    throw std::runtime_error("Invalid normalized value");
+                if (auto* sw = dynamic_cast<app::Switch*>(widget)) {
+                    if (sw->momentary && value != 0 && value != 1) throw std::runtime_error("Invalid button value");
+                    q->setValue(std::round(q->getMinValue() + float(value) * (q->getMaxValue() - q->getMinValue())));
+                } else q->setScaledValue(float(value));
+            } else if (phase == "end") finishParameter(gesture);
+            else throw std::runtime_error("Invalid parameter phase");
+        }
+        auto* reply = json_object();
+        string(reply, "type", "parameter_value"); string(reply, "gesture", gesture);
+        string(reply, "module", id); string(reply, "generation", epoch());
+        json_object_set_new(reply, "param", json_integer(param));
+        real(reply, "native_value", q->getValue());
+        string(reply, "display", q->getDisplayValueString());
+        json_object_set(reply, "request", json_object_get(cmd, "request"));
+        real(reply, "value", q->getScaledValue()); send(reply);
+    }
     math::Vec movingPosition;
     std::unordered_map<std::string, double> surfaceTimes;
     std::unordered_map<std::string, uint64_t> surfaceHashes;
@@ -144,7 +225,7 @@ class Bridge {
         const std::string next = signature.str();
         if (next != topology) {
             release(); ++generation; topology = next;
-            surfaceTimes.clear(); surfaceHashes.clear(); lastSnapshot = 0;
+            surfaceTimes.clear(); surfaceHashes.clear(); lastSnapshot = 0; liveControlCache.clear();
         }
     }
     // Conservative recognizers: unknown custom parameters retain their original surface.
@@ -200,8 +281,16 @@ class Bridge {
         real(result, "x", mw->box.pos.x - app::RACK_OFFSET.x); real(result, "y", mw->box.pos.y - app::RACK_OFFSET.y);
         real(result, "width", mw->box.size.x); real(result, "height", mw->box.size.y);
         string(result, "artwork", mw->model->plugin->path);
-        auto* controls = json_array(); auto* screens = json_array(); size_t screw = 0;
+        auto* controls = json_array(); auto* screens = json_array(); size_t screw = 0, meterIndex = 0;
         visit(mw, [&](widget::Widget* w) {
+            if (auto* meter = dynamic_cast<MeterTelemetry*>(w)) {
+                auto* control = meterControl(w, meter, meterIndex++, true);
+                const auto center = w->getRelativeOffset(w->box.size.div(2), mw);
+                real(control, "x", center.x); real(control, "y", center.y);
+                real(control, "width", w->box.size.x); real(control, "height", w->box.size.y);
+                json_object_set_new(control, "physical", json_true());
+                json_array_append_new(controls, control); return;
+            }
             const std::string type = kind(w);
             const bool displayModel = (mw->model->plugin->slug == "Fundamental" &&
                 (mw->model->slug == "ADSR" || mw->model->slug == "Scope" || mw->model->slug == "VCA-1")) ||
@@ -308,9 +397,87 @@ class Bridge {
         json_object_set_new(result, "screens", screens);
         return result;
     }
+    uint64_t wiringRevision = 1;
+    std::string wiringSignature;
+    void refreshWiring() {
+        std::ostringstream signature;
+        for (auto* cw : APP->scene->rack->getCompleteCables()) {
+            auto* c = cw->getCable();
+            signature << c->id << ':' << c->outputModule->id << ':' << c->outputId << ':' << c->inputModule->id << ':' << c->inputId << ';';
+        }
+        if (signature.str() != wiringSignature) { wiringSignature = signature.str(); ++wiringRevision; }
+    }
+    void validateCableEdit(json_t* cmd, bool connectCable) {
+        if (!localMessages || pressedButton >= 0) throw std::runtime_error("Cable edit unavailable");
+        refreshWiring();
+        if (text(cmd, "wiring") != std::to_string(wiringRevision)) throw std::runtime_error("Wiring changed; retry from current rack");
+        for (auto key : {"input_port", "output_port"}) {
+            if (!connectCable && std::string(key) == "output_port") continue;
+            const double n = number(cmd, key, -1);
+            if (!json_is_number(json_object_get(cmd, key)) || !std::isfinite(n) || n < 0 || n > 65535 || n != std::floor(n))
+                throw std::runtime_error("Invalid port ID");
+        }
+    }
+    json_t* meterControl(widget::Widget*, MeterTelemetry* meter, size_t index, bool metadata) {
+        const auto state = meter->readMeter();
+        auto* control = json_object(); string(control, "kind", "meter");
+        string(control, "id", "meter-" + std::to_string(index));
+        auto* levels = json_array(); for (float v : state.levels) json_array_append_new(levels, json_real(std::isfinite(v) ? v : 0));
+        json_object_set_new(control, "levels", levels);
+        if (metadata) {
+            real(control, "gap", state.gap); real(control, "red", state.red);
+            for (auto item : {std::make_pair("peak_color", state.peak), std::make_pair("rms_color", state.rms)}) {
+                auto* rgb = json_array(); for (float v : item.second) json_array_append_new(rgb, json_real(v));
+                json_object_set_new(control, item.first, rgb);
+            }
+        }
+        return control;
+    }
+    void liveValues() {
+        auto* root = json_object(); string(root, "type", "live_values"); string(root, "generation", epoch());
+        json_object_set_new(root, "gesture_active", json_boolean(pressedButton >= 0));
+        json_object_set_new(root, "overlay", json_boolean(overlayVisible())); string(root, "overlay_mode", overlayMode());
+        real(root, "audio_cpu_average", APP->engine->getMeterAverage());
+        auto* modules = json_array();
+        for (auto* mw : APP->scene->rack->getModules()) {
+            auto* changes = json_array(); size_t meterIndex = 0;
+            visit(mw, [&](widget::Widget* w) {
+                auto* value = json_object();
+                if (auto* meter = dynamic_cast<MeterTelemetry*>(w)) { json_decref(value); value = meterControl(w, meter, meterIndex++, false); }
+                else if (auto* light = dynamic_cast<app::ModuleLightWidget*>(w)) {
+                    string(value, "kind", "light"); json_object_set_new(value, "id", json_integer(light->firstLightId));
+                    float rgb[3] = {}; float brightness = 0;
+                    for (size_t i = 0; i < light->baseColors.size(); ++i) {
+                        auto* l = light->getLight(i); const float b = l ? l->getBrightness() : 0; brightness = std::max(brightness, b);
+                        rgb[0] += light->baseColors[i].r*b; rgb[1] += light->baseColors[i].g*b; rgb[2] += light->baseColors[i].b*b;
+                    }
+                    real(value, "brightness", brightness); real(value, "emission_r", rgb[0]); real(value, "emission_g", rgb[1]); real(value, "emission_b", rgb[2]);
+                } else if (auto* param = dynamic_cast<app::ParamWidget*>(w)) {
+                    auto* q = param->getParamQuantity(); if (!q) { json_decref(value); return; }
+                    string(value, "kind", kind(w)); json_object_set_new(value, "id", json_integer(param->paramId));
+                    real(value, "normalized", q->getScaledValue()); real(value, "value", q->getValue());
+                } else { json_decref(value); return; }
+                bool visible = true; for (auto* parent = w; parent && parent != mw; parent = parent->parent) visible &= parent->isVisible();
+                json_object_set_new(value, "visible", json_boolean(visible));
+                const std::string key = std::to_string(mw->module->id)+"/"+text(value,"kind")+"/"+encode(json_object_get(value,"id"));
+                const auto encoded = encode(value); auto found = liveControlCache.find(key);
+                if (found != liveControlCache.end() && found->second == encoded) { json_decref(value); return; }
+                liveControlCache[key] = encoded;
+                if (auto* param = dynamic_cast<app::ParamWidget*>(w)) if (auto* q = param->getParamQuantity()) string(value, "display", q->getDisplayValueString());
+                json_array_append_new(changes, value);
+            });
+            if (json_array_size(changes)) { auto* m = json_object(); string(m,"id",std::to_string(mw->module->id)); json_object_set_new(m,"controls",changes); json_array_append_new(modules,m); }
+            else json_decref(changes);
+        }
+        json_object_set_new(root, "modules", modules); send(root);
+    }
     void snapshot() {
+        lastLocalDescription = system::getTime(); describedGeneration = generation;
+        refreshWiring();
         auto* root = json_object(); string(root, "type", "snapshot");
         string(root, "generation", epoch());
+        json_object_set_new(root, "supports_live_values", json_true());
+        string(root, "wiring", std::to_string(wiringRevision));
         string(root, "undo", APP->history->getUndoName());
         string(root, "redo", APP->history->getRedoName());
         real(root, "audio_cpu_average", APP->engine->getMeterAverage());
@@ -450,13 +617,16 @@ class Bridge {
             authenticated = true; catalog(); snapshot(); return;
         }
         if (!authenticated) throw std::runtime_error("Send hello before commands");
+        if (op == "poll_live") { if (!localMessages) throw std::runtime_error("Live polling requires embedded host"); return; }
         if (op == "heartbeat") return;
         if (op == "release") { release(); return; }
         // Preview cleanup owns no patch/widget references and must survive an
         // insertion advancing the generation earlier in the same command batch.
         if (op == "preview_clear") { clearPreviews(); return; }
         if (text(cmd, "generation") != epoch()) throw std::runtime_error("Stale scene; wait for the current snapshot");
-        if (op == "pointer") {
+        if (op == "parameter_edit") {
+            parameterEdit(cmd);
+        } else if (op == "pointer") {
             const std::string id = text(cmd, "module");
             math::Vec point(number(cmd, "x"), number(cmd, "y"));
             if (!std::isfinite(point.x) || !std::isfinite(point.y)) throw std::runtime_error("Invalid pointer position");
@@ -475,6 +645,7 @@ class Bridge {
             std::string phase = text(cmd, "phase");
             int button = number(cmd, "button");
             if (phase == "down") {
+                finishParameters();
                 if (pressedButton >= 0) release();
                 activeModule = id; pressedButton = button;
                 APP->event->handleButton(mouse, button, GLFW_PRESS, mouseMods);
@@ -566,8 +737,8 @@ class Bridge {
             rack->deselectAll();
             for (const auto& id : previous) if (auto* mw = module(id)) rack->select(mw);
             rack->updateExpanders();
-        } else if (op == "patch_cable") {
-            release();
+        } else if (op == "patch_cable" || op == "cable_connect") {
+            if (op == "cable_connect") validateCableEdit(cmd, true); else release();
             auto* output = module(text(cmd, "output_module"));
             auto* input = module(text(cmd, "input_module"));
             const int outputId = number(cmd, "output_port"), inputId = number(cmd, "input_port");
@@ -579,7 +750,7 @@ class Bridge {
             for (auto* cw : cables) {
                 auto* c = cw->getCable();
                 if (std::to_string(c->id) == replaceId) {
-                    if (c->outputModule != output->module || c->outputId != outputId)
+                    if (op != "cable_connect" && (c->outputModule != output->module || c->outputId != outputId))
                         throw std::runtime_error("Cable endpoint changed; try again");
                     foundReplacement = true;
                 }
@@ -598,8 +769,8 @@ class Bridge {
             }
             connect(output, outputId, input, inputId, group);
             APP->history->push(group);
-        } else if (op == "disconnect_cable") {
-            release();
+        } else if (op == "disconnect_cable" || op == "cable_disconnect") {
+            if (op == "cable_disconnect") validateCableEdit(cmd, false); else release();
             for (auto* cw : APP->scene->rack->getCompleteCables()) {
                 auto* c = cw->getCable();
                 if (std::to_string(c->id) != text(cmd, "cable_id")) continue;
@@ -755,6 +926,11 @@ public:
                 batch.push_back(item);
             }
         } else if (cmd) batch.push_back(cmd);
+        // Compact replies are restricted to embedded semantic parameter edits.
+        // The regular frame poll still owns the scene step and full snapshot.
+        const bool compact = batch.size() == 1 && text(batch[0], "op") == "parameter_edit"
+            && json_is_true(json_object_get(batch[0], "reply_only"));
+        const bool livePoll = !batch.empty() && text(batch.back(), "op") == "poll_live";
         localMessages = json_array();
         try {
             refreshTopology();
@@ -768,14 +944,16 @@ public:
             }
             // Controller actions keep their ordering and individual acknowledgments,
             // but the scene and live descriptors only update once per rendered frame.
-            APP->scene->step();
-            scanStep();
+            if (!compact) { APP->scene->step(); scanStep(); }
             const std::string mode = overlayMode();
             if (mode != previousOverlayMode) {
                 surfaceHashes.erase("scene"); surfaceTimes.erase("scene");
                 previousOverlayMode = mode;
             }
-            snapshot();
+            if (!compact) {
+                if (livePoll && describedGeneration == generation && system::getTime()-lastLocalDescription < .2) liveValues();
+                else snapshot();
+            }
             const std::string result = encode(localMessages);
             json_decref(localMessages); localMessages = nullptr;
             if (cmd) json_decref(cmd);
@@ -793,7 +971,9 @@ public:
         }
         return module(id);
     }
+    void prepareLocalPatchLoad() { release(); ++generation; }
     void release() {
+        finishParameters();
         if (pressedButton >= 0 && APP && APP->event) {
             // Release away from ports so a dropped connection cannot accidentally patch a cable.
             math::Vec outside(-100000, -100000);
@@ -910,7 +1090,7 @@ public:
             if (auto* fb = dynamic_cast<widget::FramebufferWidget*>(w)) { caching.emplace_back(fb, fb->bypassed); fb->bypassed = true; }
             // All LEDs now have live RGB overlays, including lights nested in
             // buttons. Do not leave a stale baked glow underneath those overlays.
-            if (mw && (physical(mw, w) || dynamic_cast<app::ModuleLightWidget*>(w))) { visibility.emplace_back(w, w->visible); w->visible = false; }
+            if (mw && (physical(mw, w) || dynamic_cast<app::ModuleLightWidget*>(w) || dynamic_cast<MeterTelemetry*>(w))) { visibility.emplace_back(w, w->visible); w->visible = false; }
         });
         nvgBeginFrame(vg, width, height, 1);
         nvgScale(vg, scale, scale);

@@ -14,5 +14,21 @@
     "repository": "https://github.com/abalabahaha/opusscript.git",
     "commit": "07ae74db7385d6d1be981d929f2f2f2b7e6b8449"
   },
-  "web_dependencies": "exact versions and integrity in show-web/package-lock.json"
+  "web_dependencies": "exact versions and integrity in show-web/package-lock.json",
+  "webrtc_sources": [
+    {
+      "package": "werift",
+      "version": "0.25.1",
+      "repository": "https://github.com/shinyoshiaki/werift-webrtc",
+      "commit": "9b2438b461d953833e16981f79d37d5d77d6d9e2",
+      "archive_sha256": "8b0259d4dc3879c23a0512f84ce881879792601fbaeb946d8babe69c0e0eab3a"
+    },
+    {
+      "package": "mediabunny",
+      "version": "1.62.0",
+      "repository": "https://github.com/Vanilagy/mediabunny",
+      "commit": "03d524ffa1a1429616bcd4434f97714a77432bd7",
+      "archive_sha256": "7a3b93daf415bf00d26bafabd620ffb03d00eacd09ef12211cd008b081e75743"
+    }
+  ]
 }

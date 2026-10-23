@@ -170,6 +170,7 @@ int c3d_load(void* ptr, const char* path) {
     if (!path || !*path) return 0;
     return operation(ptr, [path](Host* h) {
         if (!rack::system::isFile(path)) throw std::runtime_error("Patch file does not exist");
+        h->bridge->prepareLocalPatchLoad();
         h->context->patch->load(path);
     });
 }

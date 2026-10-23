@@ -6,6 +6,15 @@ var peer = preload("res://scripts/show_transport.gd").new()
 var publishing := false
 var elapsed := 0.0
 var status: Label
+var live_button: Button
+var live_buttons: Array[Button] = []
+var session_name: LineEdit
+var session_title := "Live session"
+var live_state := ""
+var broadcast_button: Button
+var invite_button: Button
+var visitor_button: Button
+var status_notice_until := 0
 var fixtures := {}
 var latest := {}
 var quality: OptionButton
@@ -15,64 +24,106 @@ var audience=preload("res://scripts/show_audience.gd").new()
 var visuals = preload("res://scripts/show_visuals.gd").new()
 var visual_elapsed := 1.0
 var visual_state := {}
+var visual_control_epoch := ""
+var visual_wiring := ""
+var visual_control_revision := -1
 var fixture_guides := true
 var visitor_address := "http://localhost:8778/"
+var controls = preload("res://scripts/show_controls.gd").new()
 
 func setup(owner_host, column: VBoxContainer) -> void:
 	host = owner_host
 	add_child(audience)
-	audience.setup(host,column,peer)
+	var ui = preload("res://scripts/ui_theme.gd")
+	status = Label.new()
+	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.text = "Ready to broadcast. Your patch stays on this computer."
+	status.add_theme_color_override("font_color", Color("a4edcf"))
+	column.add_child(status)
+	var name_label := Label.new()
+	name_label.text = "Session name · displayed on the shared boards"
+	column.add_child(name_label)
+	session_name = LineEdit.new()
+	session_name.max_length = 80
+	session_name.placeholder_text = "Name your performance"
+	var naming := ConfigFile.new()
+	var naming_path := OS.get_environment("CARDINAL_EMBEDDED_USER_DIR").path_join("live-session.cfg")
+	naming.load(naming_path)
+	session_title = str(naming.get_value("session", "title", "Live session"))
+	session_name.text = session_title
+	session_name.text_changed.connect(func(value: String):
+		if not publishing:
+			session_title = value.strip_edges()
+			naming.set_value("session", "title", session_title)
+			naming.save(naming_path))
+	column.add_child(session_name)
+	broadcast_button = Button.new()
+	broadcast_button.text = "Go live"
+	broadcast_button.theme_type_variation = "PrimaryButton"
+	broadcast_button.custom_minimum_size.y = 46
+	broadcast_button.pressed.connect(_toggle)
+	column.add_child(broadcast_button)
+	var links := HBoxContainer.new()
+	column.add_child(links)
+	invite_button = Button.new()
+	invite_button.text = "Copy invitation"
+	invite_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	invite_button.pressed.connect(func(): DisplayServer.clipboard_set(visitor_address); status.text = "Invitation copied. Share it with your guests."; status_notice_until = Time.get_ticks_msec() + 2500)
+	links.add_child(invite_button)
+	visitor_button = Button.new()
+	visitor_button.text = "Open visitor view"
+	visitor_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	visitor_button.pressed.connect(func(): OS.shell_open(visitor_address))
+	links.add_child(visitor_button)
+	var public_switch := CheckButton.new()
+	public_switch.text = "List this performance on the public homepage"
+	public_switch.toggled.connect(func(enabled: bool): public_show=enabled)
+	column.add_child(public_switch)
+	var privacy := Label.new()
+	privacy.text = "Off: guests need your invitation. On: anyone can join as a visitor."
+	privacy.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	privacy.add_theme_font_size_override("font_size", 14)
+	column.add_child(privacy)
+	var collaboration: VBoxContainer = ui.section(column, "Collaborators", true)
+	controls.setup(host.bridge, collaboration)
+	var chat_column: VBoxContainer = ui.section(column, "Audience & chat", false)
+	audience.setup(host, chat_column, peer)
+	var tools: VBoxContainer = ui.section(column, "Add to the stage", false)
+	var hint := Label.new()
+	hint.text = "Connect audio to Show Speakers and CV to Show Lights. Use their module controls to place them in the world."
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.add_theme_font_size_override("font_size", 14)
+	tools.add_child(hint)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	tools.add_child(grid)
+	for entry in [["Chat board", "ShowChatBoard"], ["Spatial speaker", "ShowSpeaker"], ["CV light", "ShowLight"], ["Dancing figure", "ShowFigure"], ["Fountain", "ShowFountain"], ["Particles", "ShowParticles"], ["Kinetic sculpture", "ShowSculpture"]]:
+		var button := Button.new()
+		button.text = entry[0]
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.pressed.connect(func(): host.bridge.send_command("add", {"plugin":"Cardinal3DShow", "model":entry[1]}))
+		grid.add_child(button)
+	var guides := CheckButton.new()
+	guides.text = "Show light aiming guides"
+	guides.button_pressed = true
+	guides.toggled.connect(func(enabled: bool): fixture_guides=enabled)
+	tools.add_child(guides)
+	var options: VBoxContainer = ui.section(column, "Stream & monitoring options", false)
 	var audio_config := ConfigFile.new()
 	var audio_path := OS.get_environment("CARDINAL_EMBEDDED_USER_DIR").path_join("audio.cfg")
 	audio_config.load(audio_path)
 	spatial_monitoring=bool(audio_config.get_value("audio","spatial_monitor",OS.get_environment("CARDINAL_3D_XR")=="1" and OS.get_environment("CARDINAL_SHOW_AUTO_START")=="1"))
-	var monitor := CheckButton.new();monitor.text="Spatial headphone monitoring · Show Speakers only";monitor.button_pressed=spatial_monitoring
+	var monitor := CheckButton.new()
+	monitor.text = "Spatial headphone monitoring"
+	monitor.tooltip_text = "Monitor Show Speakers from your position in the stage."
+	monitor.button_pressed=spatial_monitoring
 	monitor.toggled.connect(func(enabled): spatial_monitoring=enabled;audio_config.set_value("audio","spatial_monitor",enabled);audio_config.save(audio_path))
-	column.add_child(monitor)
-	if host.bridge.has_signal("stopping"): host.bridge.stopping.connect(func(): peer.close())
-	var title := Label.new()
-	title.text = "Your live stage"
-	title.add_theme_font_size_override("font_size", 25)
-	column.add_child(title)
-	status = Label.new()
-	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status.text = "Local test · start the Show web preview, then broadcast."
-	column.add_child(status)
-	var hint := Label.new()
-	hint.text = "Add Show Speaker modules and connect audio to their inputs.\nAdd Show Light modules for CV-controlled stage lighting.\nPosition and direction are set by each module's knobs."
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(hint)
-	for entry in [["Add a shared chat board", "ShowChatBoard"], ["Add a spatial speaker", "ShowSpeaker"], ["Add a CV light", "ShowLight"], ["Add a dancing figure", "ShowFigure"], ["Add a synchronized fountain", "ShowFountain"], ["Add a particle emitter", "ShowParticles"], ["Add a kinetic sculpture", "ShowSculpture"]]:
-		var button := Button.new()
-		button.text = entry[0]
-		button.pressed.connect(func(): host.bridge.send_command("add", {"plugin":"Cardinal3DShow", "model":entry[1]}))
-		column.add_child(button)
-	var start := Button.new()
-	start.text = "Start / stop broadcasting"
-	start.pressed.connect(_toggle)
-	column.add_child(start)
-	var public_switch := CheckButton.new()
-	public_switch.text = "Public show · anyone can enter from the homepage"
-	public_switch.toggled.connect(func(enabled: bool): public_show=enabled)
-	column.add_child(public_switch)
-	var browser := Button.new()
-	browser.text = "Open visitor page"
-	browser.pressed.connect(func(): OS.shell_open(visitor_address))
-	column.add_child(browser)
-	var invite := Button.new()
-	invite.text="Copy visitor invitation link"
-	invite.pressed.connect(func(): DisplayServer.clipboard_set(visitor_address);status.text="Visitor invitation copied · share this link with your guests.")
-	column.add_child(invite)
-	var guides := CheckButton.new()
-	guides.text = "Light fixture aiming guides"
-	guides.button_pressed = true
-	guides.toggled.connect(func(enabled: bool): fixture_guides=enabled)
-	column.add_child(guides)
+	options.add_child(monitor)
 	var label := Label.new()
-	label.text = "Maximum visitor audio quality (compressed transport)"
-	column.add_child(label)
+	label.text = "Maximum visitor audio quality"
+	options.add_child(label)
 	quality = OptionButton.new()
-	for choice in ["Standard · 64 kb/s per mono source", "High · 96 kb/s per mono source", "Maximum · 128 kb/s per mono source"]: quality.add_item(choice)
+	for choice in ["Standard · 64 kb/s per source", "High · 96 kb/s per source", "Maximum · 128 kb/s per source"]: quality.add_item(choice)
 	quality.select(2)
 	var preferences_path := OS.get_environment("CARDINAL_EMBEDDED_USER_DIR").path_join("show-preferences.json")
 	if FileAccess.file_exists(preferences_path):
@@ -80,21 +131,36 @@ func setup(owner_host, column: VBoxContainer) -> void:
 		if preferences is Dictionary: quality.select(clampi(int(preferences.get("quality", 2)),0,2))
 	quality.item_selected.connect(func(index: int):
 		var file := FileAccess.open(preferences_path, FileAccess.WRITE)
-		if file != null: file.store_string(JSON.stringify({"quality":index}))
-	)
-	column.add_child(quality)
+		if file != null: file.store_string(JSON.stringify({"quality":index})))
+	options.add_child(quality)
 	var notice := Label.new()
-	notice.text = "Visitors receive Opus at their chosen quality, up to this ceiling.\nBrowsers without Opus decoding use PCM for local testing."
+	notice.text = "Guests choose their listening quality up to this limit. WebRTC carries real-time audio."
 	notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(notice)
+	notice.add_theme_font_size_override("font_size", 14)
+	options.add_child(notice)
+	if host.bridge.has_signal("stopping"): host.bridge.stopping.connect(func(): controls.stop();peer.close())
 	if OS.get_environment("CARDINAL_SHOW_AUTO_START") == "1": _toggle.call_deferred()
+
+func register_live_button(button: Button) -> void:
+	live_buttons.append(button)
+	live_state = ""
+
+func open_live() -> void:
+	host.show_settings("show")
+	if not publishing: session_name.grab_focus(); session_name.select_all()
 
 func _toggle() -> void:
 	if publishing:
+		controls.stop()
 		peer.close()
 		publishing = false
 		audience.receive({})
 		status.text = "Broadcast stopped · your patch keeps playing."
+		return
+	session_title = session_name.text.strip_edges()
+	if session_title.is_empty():
+		status.text = "Give this session a name before going live."
+		open_live()
 		return
 	var path := OS.get_environment("CARDINAL_SHOW_SESSION")
 	if not FileAccess.file_exists(path):
@@ -114,6 +180,19 @@ func _toggle() -> void:
 	status.text = "Connecting to the visitor room…" if publishing else "Could not connect to the visitor room."
 
 func _process(delta: float) -> void:
+	var caption := "End live session" if publishing else "Go live"
+	if broadcast_button.text != caption: broadcast_button.text = caption
+	var connected := publishing and peer.get_ready_state() == WebSocketPeer.STATE_OPEN
+	session_name.editable = not publishing
+	var next_state := "live" if connected and host.bridge.connected else ("connecting" if publishing else "offline")
+	if next_state != live_state:
+		live_state = next_state
+		for button in live_buttons:
+			button.text = {"live":"● LIVE", "connecting":"Connecting…", "offline":"Live"}[live_state]
+			button.tooltip_text = "Live session settings" if connected else "Name your session and go live"
+			button.theme_type_variation = "LiveButton" if live_state == "live" else "Button"
+	invite_button.disabled = not connected
+	visitor_button.disabled = not connected
 	if host == null or not host.bridge.connected or OS.get_environment("CARDINAL_3D_EMBEDDED") != "1": return
 	var native = host.bridge.native
 	if native == null or not native.has_method("show_json"): return
@@ -130,17 +209,29 @@ func _process(delta: float) -> void:
 		if peer.get_ready_state() == WebSocketPeer.STATE_CLOSED:
 			publishing = false
 			status.text = "Room disconnected. Close any performer preview tab and start broadcasting again."
+	controls.tick(peer,peer.room_snapshot(),publishing and peer.get_ready_state()==WebSocketPeer.STATE_OPEN)
 	if elapsed >= 1.0 / 30.0:
 		elapsed = 0.0
 		var data: Variant = JSON.parse_string(native.show_json())
 		if data is Dictionary:
+			data["session_title"] = session_title
 			latest = data
 			_update_fixtures(data)
 			if publishing and peer.get_ready_state() == WebSocketPeer.STATE_OPEN:
-				if visual_elapsed >= 0.05:
+				var control_epoch: String=controls.policy.epoch if controls.enabled and controls.ready else ""
+				var control_revision: int=controls.policy.revision if controls.enabled else 0
+				var capture_visuals: bool=visual_elapsed >= .2 or visual_control_epoch!=control_epoch or visual_control_revision!=control_revision or visual_wiring!=str(host.snapshot.get("wiring", ""))
+				if capture_visuals:
 					visual_elapsed=0.0
 					visual_state=visuals.capture(host,peer)
-				data["visuals"] = visual_state
+					visual_wiring=str(host.snapshot.get("wiring", ""))
+					visual_control_epoch=control_epoch
+					visual_control_revision=control_revision
+				if capture_visuals: data["visuals"] = visual_state
+				if host.bridge.has_method("take_visual_values"):data["visual_values"]=host.bridge.take_visual_values()
+				data["wiring"] = visual_wiring
+				data["control_epoch"] = control_epoch
+				data["control_revision"] = visual_control_revision
 				var desktop_head: Vector3 = host.camera.global_position + Vector3(0,1.5,0)
 				data["performer_pose"]={"position":[desktop_head.x,desktop_head.y,desktop_head.z],"yaw":host.camera.global_rotation.y+PI}
 				if host.xr_session != null and host.xr_session.headset != null:
@@ -151,11 +242,13 @@ func _process(delta: float) -> void:
 				data["public_show"] = public_show
 				data["max_audio_kbps"] = [64,96,128][quality.selected]
 				if peer.get_current_outbound_buffered_amount() < 65536: peer.send_text(JSON.stringify(data))
-				status.text = "LIVE · %d speakers · %d lights · Opus audience audio" % [data.speakers.size(),data.lights.size()]
+				if Time.get_ticks_msec() >= status_notice_until:
+					status.text = "Broadcasting · %d %s · %d %s" % [data.speakers.size(), "speaker" if data.speakers.size()==1 else "speakers", data.lights.size(), "light" if data.lights.size()==1 else "lights"]
 	# Offline UI draining prevents old samples from replaying on the next start.
 	if not publishing: native.show_audio_network()
 
 func _exit_tree() -> void:
+	controls.stop()
 	peer.close()
 
 func _update_fixtures(data: Dictionary) -> void:
@@ -193,7 +286,7 @@ func _update_fixtures(data: Dictionary) -> void:
 		present[id]=true
 		if not fixtures.has(id):
 			var prop=preload("res://scripts/show_chat_board.gd").new();add_child(prop);fixtures[id]=prop
-		fixtures[id].apply_state(board,audience.room.get("chat",[]))
+		fixtures[id].apply_state(board,audience.room.get("chat",[]),session_title)
 		if OS.get_environment("CARDINAL_3D_XR")!="1": fixtures[id].position.y-=1.5
 	for object: Dictionary in data.get("objects",[]):
 		var id := "object/"+str(object.id)

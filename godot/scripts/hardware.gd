@@ -52,6 +52,7 @@ static func cylinder(parent: Node3D, radius: float, depth: float, at: Vector3, m
 	mesh.height = depth
 	mesh.radial_segments = segments
 	var node := instance(parent, mesh, at, mat)
+	node.set_meta("show_shape", {"kind":"cylinder", "radius":radius, "top":radius*taper, "height":depth})
 	node.rotation.x = PI / 2
 	return node
 
@@ -117,4 +118,6 @@ static func beveled_box(size: Vector3, bevel: float = 0.002) -> ArrayMesh:
 	return surface.commit()
 
 static func box(parent: Node3D, size: Vector3, at: Vector3, mat: Material, bevel: float = 0.002) -> MeshInstance3D:
-	return instance(parent, beveled_box(size, bevel), at, mat)
+	var node := instance(parent, beveled_box(size, bevel), at, mat)
+	node.set_meta("show_shape", {"kind":"box", "size":[size.x,size.y,size.z], "bevel":bevel})
+	return node

@@ -1,4 +1,7 @@
-# Cardinal 3D Live · v0.5 alpha
+# Cardinal 3D Live · v0.6 alpha development
+
+Version 0.6 is in development. See the [collaboration milestones](docs/COLLABORATION-0.6.md).
+The downloadable release remains v0.5; remote patch editing is not yet available.
 
 Build a modular instrument, perform inside it, and invite an audience into the same 3D world.
 
@@ -53,3 +56,7 @@ Created by [mtyas](https://github.com/mtyas), building on Cardinal 3D. [Cardinal
 ## Development
 
 Start with [development and contribution guidance](docs/DEVELOPMENT.md), [clean-build instructions](docs/BUILD-LIVE.md), [Show protocol](docs/SHOW-PROTOCOL.md), and [validation](docs/VALIDATION.md).
+
+0.6 development: [WebRTC audio and collaborative control](docs/WEBRTC-AUDIO.md)
+are now the preferred browser transport, with buffered visitor playback as a
+fallback. Cross-network latency and TURN acceptance testing remain in progress.

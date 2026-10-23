@@ -9,6 +9,7 @@ const ControlFocus := preload("res://scripts/control_focus.gd")
 const ModuleBrowser := preload("res://scripts/module_browser.gd")
 var module_browser
 var xr_session
+var desktop_layout
 var bridge: CardinalBridgeClient
 var camera: Camera3D
 var environment: Environment
@@ -62,6 +63,7 @@ var settings_title: Label
 var settings_icon: TextureRect
 var settings_hint: Label
 var settings_section := "audio"
+var settings_tabs := {}
 var rack_layout
 var immersive_environment
 var pending_layout_load := {}
@@ -150,6 +152,11 @@ func _ready() -> void:
 		add_child(xr_session)
 		if not xr_session.setup(self): xr_session.queue_free(); xr_session = null
 
+	if xr_session == null:
+		desktop_layout = preload("res://scripts/desktop_layout.gd").new()
+		add_child(desktop_layout)
+		desktop_layout.setup(self)
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		bridge.send_command("release")
@@ -190,10 +197,10 @@ func _build_ui() -> void:
 	toolbar.add_theme_constant_override("v_separation", 6)
 	column.add_child(toolbar)
 	var title := Label.new()
-	title.text = "CARDINAL 3D LIVE"
-	title.add_theme_font_size_override("font_size", 18)
+	title.text = "CARDINAL  /  LIVE"
+	title.add_theme_font_size_override("font_size", 14)
 	title.add_theme_color_override("font_color", Color("e6f7ff"))
-	title.custom_minimum_size.x = 155
+	title.custom_minimum_size.x = 180
 	toolbar.add_child(title)
 	_button("Modules", func():
 		_release()
@@ -201,18 +208,16 @@ func _build_ui() -> void:
 		bridge.send_command("escape")
 		module_browser.show_browser())
 	var browse: Button = toolbar.get_child(toolbar.get_child_count() - 1)
-	browse.add_theme_stylebox_override("normal", preload("res://scripts/ui_theme.gd").box("195363", "55a9bd"))
+	browse.theme_type_variation = "PrimaryButton"
 	_button("Frame rack", _frame_rack)
-	_button("Audio & MIDI", func(): show_settings("audio"))
+	_button("Settings", func(): show_settings(settings_section))
 	settings_button = toolbar.get_child(toolbar.get_child_count() - 1)
-	_button("Environment & graphics", func(): show_settings("environment"))
 	settings_panel = PanelContainer.new()
 	settings_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	settings_panel.position = Vector2(16, 62)
+	settings_panel.position = Vector2(16, 76)
 	settings_panel.visible = false
 	root.add_child(settings_panel)
-	settings_panel.custom_minimum_size = Vector2(600, 700)
-	settings_panel.size = Vector2(600, 700)
+	settings_panel.size = Vector2(620, 700)
 	settings_scroll = ScrollContainer.new()
 	settings_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	var settings_shell := VBoxContainer.new()
@@ -228,9 +233,23 @@ func _build_ui() -> void:
 	settings_title.text = "Audio & MIDI"
 	settings_title.add_theme_font_size_override("font_size", 26)
 	settings_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	settings_title.add_theme_color_override("font_color", Color("62e4ca"))
+	settings_title.add_theme_color_override("font_color", Color("a4edcf"))
 	settings_heading.add_child(settings_title)
 	settings_heading.add_child(preload("res://scripts/ui_theme.gd").close_button(func(): settings_panel.hide()))
+	var navigation_tabs := HFlowContainer.new()
+	navigation_tabs.add_theme_constant_override("h_separation", 6)
+	navigation_tabs.add_theme_constant_override("v_separation", 6)
+	settings_shell.add_child(navigation_tabs)
+	for entry in [["show", "Session"], ["audio", "Audio & MIDI"], ["environment", "Space"], ["racks", "Racks"], ["about", "Help"]]:
+		var tab := Button.new()
+		tab.text = entry[1]
+		tab.toggle_mode = true
+		tab.add_theme_font_size_override("font_size", 14)
+		tab.pressed.connect(func(): show_settings(entry[0]))
+		navigation_tabs.add_child(tab)
+		settings_tabs[entry[0]] = tab
+	root.resized.connect(_fit_settings)
+	_fit_settings.call_deferred()
 	settings_hint = Label.new()
 	settings_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	settings_shell.add_child(settings_hint)
@@ -252,7 +271,10 @@ func _build_ui() -> void:
 	show_stage = preload("res://scripts/show_stage.gd").new()
 	add_child(show_stage)
 	show_stage.setup(self, show_column)
-	_button("Show & broadcast", func(): show_settings("show"))
+	_button("Racks", func(): show_settings("racks"))
+	_button("Live", func(): show_stage.open_live())
+	show_stage.live_button = toolbar.get_child(toolbar.get_child_count() - 1)
+	show_stage.register_live_button(show_stage.live_button)
 	environment_column.hide()
 	racks_column.hide()
 	if OS.get_environment("CARDINAL_3D_EMBEDDED") == "1":
@@ -265,6 +287,7 @@ func _build_ui() -> void:
 	patch_menu.text = "Patch"
 	patch_menu.add_theme_font_size_override("font_size", 16)
 	toolbar.add_child(patch_menu)
+	toolbar.move_child(patch_menu, 1)
 	var popup := patch_menu.get_popup()
 	popup.add_item("Open patch…", 0)
 	popup.add_item("Save patch as…", 1)
@@ -353,7 +376,11 @@ func _build_ui() -> void:
 	instructions.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	instructions.offset_top = -32
 	instructions.offset_left = 20
-	root.add_child(instructions)
+	about_page.add_child(instructions)
+	about_page.move_child(instructions, 0)
+	instructions.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	instructions.position = Vector2.ZERO
+	instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tooltip = Label.new()
 	tooltip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tooltip.add_theme_color_override("font_color", Color("b4f0ff"))
@@ -395,16 +422,25 @@ func _build_ui() -> void:
 	module_browser.insert_requested.connect(func(plugin: String, model: String):
 		bridge.send_command("add", {"plugin": plugin, "model": model}))
 
+func _fit_settings() -> void:
+	if settings_panel == null: return
+	var available: Vector2 = settings_panel.get_parent().size - Vector2(32, 96)
+	settings_panel.size = Vector2(minf(620, available.x), minf(740, available.y))
+
 func show_settings(section: String) -> void:
 	settings_section = section
+	for key in settings_tabs:
+		settings_tabs[key].set_pressed_no_signal(key == section)
+	settings_tabs["racks"].visible = rack_layout != null
+	_fit_settings()
 	audio_column.visible = section == "audio"
 	environment_column.visible = section == "environment"
 	racks_column.visible = section == "racks"
 	about_page.visible = section == "about"
 	show_column.visible = section == "show"
-	settings_title.text = {"audio": "Audio & MIDI", "environment": "Environment & graphics", "racks": "Rack management", "about": "About & licences", "show": "Show & broadcast"}.get(section, "Settings")
+	settings_title.text = {"audio": "Audio & MIDI", "environment": "Your space", "racks": "Rack layout", "about": "Help & credits", "show": "Live session"}.get(section, "Settings")
 	settings_icon.texture = preload("res://scripts/ui_theme.gd").icon(section)
-	settings_hint.text = {"audio": "Your sound and instruments · Use the stick to scroll long lists.", "environment": "Find your place · Choose scenery, daylight and picture quality.", "racks": "Arrange your space · Unlock Layout mode to move, turn or add cases."}.get(section, "")
+	settings_hint.text = {"audio": "Your sound devices and instruments.", "environment": "Scenery, daylight and picture quality.", "racks": "Unlock Layout mode to arrange your cases.", "show": "Broadcast, invite guests and choose who can play."}.get(section, "")
 	settings_scroll.scroll_vertical = 0
 	settings_panel.show()
 
@@ -450,6 +486,11 @@ func _on_message(message: Dictionary) -> void:
 		"preview":
 			if str(message.get("generation")) == generation:
 				module_browser.receive_descriptor(message["descriptor"])
+		"live_values":
+			if str(message.get("generation",""))==generation:
+				for descriptor: Dictionary in message.get("descriptors",[]):
+					var id := str(descriptor.id)
+					if modules.has(id):modules[id].update_state(descriptor)
 		"snapshot":
 			var reset := generation != str(message["generation"])
 			generation = str(message["generation"])
@@ -677,16 +718,16 @@ func _pending_wire() -> void:
 func _frame_rack() -> void:
 	if modules.is_empty():
 		return
-	var bounds := Rect2()
+	var bounds := AABB()
 	var first := true
 	for view: CardinalModuleView in modules.values():
 		var data := view.descriptor
-		var rectangle := Rect2(float(data["x"]), float(data["y"]), float(data["width"]), float(data["height"]))
-		bounds = rectangle if first else bounds.merge(rectangle)
-		first = false
-	if rack_case != null and rack_case.bounds.has_area(): bounds = rack_case.bounds
-	target = Vector3(bounds.get_center().x * ModuleView.SCALE, -bounds.get_center().y * ModuleView.SCALE, 0)
-	distance = maxf(bounds.size.x * ModuleView.SCALE * 1.6, bounds.size.y * ModuleView.SCALE * 2.5)
+		for corner in [Vector3.ZERO, Vector3(float(data.width) * ModuleView.SCALE, 0, 0), Vector3(0, -float(data.height) * ModuleView.SCALE, 0), Vector3(float(data.width) * ModuleView.SCALE, -float(data.height) * ModuleView.SCALE, 0)]:
+			var point: Vector3 = view.to_global(corner)
+			if first: bounds = AABB(point, Vector3.ZERO); first = false
+			else: bounds = bounds.expand(point)
+	target = bounds.get_center()
+	distance = maxf(1.0, maxf(bounds.size.x * 1.6, bounds.size.y * 2.5) + bounds.size.z)
 	_update_camera()
 
 func _apply_lighting() -> void:
@@ -754,7 +795,9 @@ func _hit(at: Vector2) -> Dictionary:
 	var result := get_world_3d().direct_space_state.intersect_ray(query)
 	if result.is_empty():
 		return {}
+	if not result["collider"].has_meta("module_view"): return {}
 	var view: CardinalModuleView = result["collider"].get_meta("module_view")
+	if not is_instance_valid(view): return {}
 	return {"view": view, "pixel": view.pixel_at(result["position"])}
 
 func _clear_focus() -> void:
@@ -922,6 +965,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			_clear_focus()
 			return
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _title_hit(hit):
+			if desktop_layout != null and rack_layout.layout_mode:
+				desktop_layout.select_view(hit.view)
+				show_settings("racks")
+				return
 			_clear_focus()
 			captured_module = str(hit["view"].descriptor["id"])
 			moving = true
@@ -967,6 +1014,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				bridge.send_command("remove", {"module": str(hit["view"].descriptor["id"])})
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE and settings_panel.visible and not dialog.visible:
+		settings_panel.hide()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseButton and event.pressed and settings_panel.visible:
 		if not settings_panel.get_global_rect().has_point(event.position) and not settings_button.get_global_rect().has_point(event.position):
 			settings_panel.hide()
